@@ -1,4 +1,0 @@
-Hello, I'm a config file
-
-<! for i=0, 4 do !>test string #<% i + 1 %>: <% opt.test %>
-<! end !>
