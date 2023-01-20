@@ -14,6 +14,10 @@ comptime {
     }
 }
 
+pub const std_options = struct {
+    pub const log_level = if (@import("builtin").mode == .Debug) .debug else .info;
+};
+
 pub fn main() !void {
     // TODO: add flag to emit generated lua files
     if (std.os.argv.len != 2) {

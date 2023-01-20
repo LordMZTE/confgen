@@ -138,11 +138,11 @@ fn lAddString(l: *c.lua_State) !c_int {
 
 fn lAddPath(l: *c.lua_State) !c_int {
     var path_len: usize = 0;
-    const path = c.luaL_checklstring(l, 1, &path_len);
+    const path = c.luaL_checklstring(l, 1, &path_len)[0..path_len];
 
     const state = getState(l);
 
-    var dir = try std.fs.cwd().openIterableDir(path[0..path_len], .{});
+    var dir = try std.fs.cwd().openIterableDir(path, .{});
     defer dir.close();
 
     var iter = try dir.walk(std.heap.c_allocator);
@@ -152,14 +152,20 @@ fn lAddPath(l: *c.lua_State) !c_int {
         if (entry.kind == .Directory)
             continue;
 
-        const outpath = if (std.mem.endsWith(u8, entry.path, ".cgt"))
+        const outbase = if (std.mem.endsWith(u8, entry.path, ".cgt"))
             entry.path[0 .. entry.path.len - 4]
         else
             entry.path;
 
+        const outpath = try std.fs.path.join(std.heap.c_allocator, &.{ path, outbase });
+        errdefer std.heap.c_allocator.free(outpath);
+
+        const inpath = try std.fs.path.join(std.heap.c_allocator, &.{path, entry.path});
+        errdefer std.heap.c_allocator.free(inpath);
+
         try state.files.append(.{
-            .outpath = try std.heap.c_allocator.dupe(u8, outpath),
-            .content = .{ .path = try std.heap.c_allocator.dupe(u8, entry.path) },
+            .outpath = outpath,
+            .content = .{ .path = inpath },
             .copy = !std.mem.endsWith(u8, entry.path, ".cgt"),
         });
     }
