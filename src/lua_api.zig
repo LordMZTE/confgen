@@ -105,8 +105,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     c.lua_pop(l, 1);
 
     // initialize template
-    const tmpl = try LTemplate.init(code);
-    tmpl.push(l);
+    const tmpl = (try LTemplate.init(code)).push(l);
 
     c.lua_setfield(l, -2, "tmpl");
     _ = c.lua_setfenv(l, -2);
@@ -117,7 +116,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
         return error.RunTemplate;
     }
 
-    return try tmpl.output.toOwnedSlice();
+    return try tmpl.getOutput(l);
 }
 
 fn lAddString(l: *c.lua_State) !c_int {
@@ -160,7 +159,7 @@ fn lAddPath(l: *c.lua_State) !c_int {
         const outpath = try std.fs.path.join(std.heap.c_allocator, &.{ path, outbase });
         errdefer std.heap.c_allocator.free(outpath);
 
-        const inpath = try std.fs.path.join(std.heap.c_allocator, &.{path, entry.path});
+        const inpath = try std.fs.path.join(std.heap.c_allocator, &.{ path, entry.path });
         errdefer std.heap.c_allocator.free(inpath);
 
         try state.files.append(.{
@@ -206,26 +205,64 @@ pub const LTemplate = struct {
     code: TemplateCode,
     output: std.ArrayList(u8),
 
-    pub fn init(code: TemplateCode) !*LTemplate {
-        const self = try std.heap.c_allocator.create(LTemplate);
-        self.* = .{
+    pub fn init(code: TemplateCode) !LTemplate {
+        return .{
             .output = std.ArrayList(u8).init(std.heap.c_allocator),
             .code = code,
         };
-        return self;
     }
 
     pub fn deinit(self: *LTemplate) void {
         self.output.deinit();
-        std.heap.c_allocator.destroy(self);
     }
 
-    pub fn push(self: *LTemplate, l: *c.lua_State) void {
-        ffi.luaPushUdata(l, self, registry_key);
+    pub fn push(self: LTemplate, l: *c.lua_State) *LTemplate {
+        const self_ptr = ffi.luaPushUdata(l, LTemplate, registry_key);
+        self_ptr.* = self;
+
+        // Create the companion table. It is used for storing user-provided stuff.
+        c.lua_pushlightuserdata(l, self_ptr);
+        c.lua_newtable(l);
+        c.lua_settable(l, c.LUA_REGISTRYINDEX);
+
+        return self_ptr;
+    }
+
+    fn getOutput(self: *LTemplate, l: *c.lua_State) ![]const u8 {
+        const top = c.lua_gettop(l);
+        defer c.lua_settop(l, top);
+
+        c.lua_pushlightuserdata(l, self);
+        c.lua_gettable(l, c.LUA_REGISTRYINDEX);
+
+        c.lua_getfield(l, -1, "post_processor");
+
+        // check if there's no post processor
+        if (c.lua_isnil(l, -1)) {
+            return try self.output.toOwnedSlice();
+        }
+
+        c.lua_pushlstring(l, self.output.items.ptr, self.output.items.len);
+
+        // call post processor
+        if (c.lua_pcall(l, 1, 1, 0) != 0) {
+            std.log.err("running post processor: {s}", .{c.lua_tolstring(l, -1, null)});
+            return error.PostProcessor;
+        }
+
+        var out_len: usize = 0;
+        const out = c.lua_tolstring(l, -1, &out_len)[0..out_len];
+
+        return try std.heap.c_allocator.dupe(u8, out);
     }
 
     fn lGC(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(*LTemplate, l, 1, registry_key).*;
+        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+
+        // set this template's companion table in the registry to nil
+        c.lua_pushlightuserdata(l, self);
+        c.lua_pushnil(l);
+        c.lua_settable(l, c.LUA_REGISTRYINDEX);
 
         self.deinit();
 
@@ -233,7 +270,7 @@ pub const LTemplate = struct {
     }
 
     fn lPushLitIdx(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(*LTemplate, l, 1, registry_key).*;
+        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
         const idx = std.math.cast(usize, c.luaL_checkint(l, 2)) orelse return error.InvalidIndex;
 
         if (idx >= self.code.literals.len)
@@ -245,10 +282,26 @@ pub const LTemplate = struct {
     }
 
     fn lPushValue(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(*LTemplate, l, 1, registry_key).*;
+        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
         const val = c.luaL_checklstring(l, 2, null);
 
         try self.output.appendSlice(std.mem.span(val));
+
+        return 0;
+    }
+
+    fn lSetPostProcessor(l: *c.lua_State) !c_int {
+        c.luaL_checktype(l, 2, c.LUA_TFUNCTION);
+
+        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+
+        // get companion table
+        c.lua_pushlightuserdata(l, self);
+        c.lua_gettable(l, c.LUA_REGISTRYINDEX);
+
+        // set field on companion table
+        c.lua_pushvalue(l, 2);
+        c.lua_setfield(l, -2, "post_processor");
 
         return 0;
     }
@@ -264,6 +317,9 @@ pub const LTemplate = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lPushValue));
         c.lua_setfield(l, -2, "pushValue");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lSetPostProcessor));
+        c.lua_setfield(l, -2, "setPostProcessor");
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");

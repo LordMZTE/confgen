@@ -26,15 +26,15 @@ pub fn luaFunc(comptime func: fn (*c.lua_State) anyerror!c_int) c.lua_CFunction 
 }
 
 /// Convenience function for pushing some full userdata onto the lua stack
-pub fn luaPushUdata(l: *c.lua_State, udata: anytype, tname: [*:0]const u8) void {
-    const T = @TypeOf(udata);
-
+pub fn luaPushUdata(l: *c.lua_State, comptime T: type, tname: [*:0]const u8) *T {
     // create and set data
-    @ptrCast(*T, @alignCast(@alignOf(*T), c.lua_newuserdata(l, @sizeOf(T)).?)).* = udata;
+    const udata = @ptrCast(*T, @alignCast(@alignOf(*T), c.lua_newuserdata(l, @sizeOf(T)).?));
 
     // set metatable
     c.luaL_getmetatable(l, tname);
     _ = c.lua_setmetatable(l, -2);
+
+    return udata;
 }
 
 pub fn luaGetUdata(comptime T: type, l: *c.lua_State, param: c_int, tname: [*:0]const u8) *T {
