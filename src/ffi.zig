@@ -40,3 +40,13 @@ pub fn luaPushUdata(l: *c.lua_State, comptime T: type, tname: [*:0]const u8) *T 
 pub fn luaGetUdata(comptime T: type, l: *c.lua_State, param: c_int, tname: [*:0]const u8) *T {
     return @ptrCast(*T, @alignCast(@alignOf(*T), c.luaL_checkudata(l, param, tname)));
 }
+
+pub fn luaCheckString(l: *c.lua_State, idx: c_int) []const u8 {
+    var len: usize = 0;
+    return c.luaL_checklstring(l, idx, &len)[0..len];
+}
+
+pub fn luaToString(l: *c.lua_State, idx: c_int) []const u8 {
+    var len: usize = 0;
+    return c.lua_tolstring(l, idx, &len)[0..len];
+}

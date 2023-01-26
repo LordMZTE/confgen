@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const c = @import("ffi.zig").c;
+const ffi = @import("ffi.zig");
+const c = ffi.c;
 
 const luagen = @import("luagen.zig");
 const lapi = @import("lua_api.zig");
@@ -49,12 +50,12 @@ pub fn main() !void {
     defer std.heap.c_allocator.free(conf_file_path);
 
     if (c.luaL_loadfile(l, conf_file_path.ptr) != 0) {
-        std.log.err("loading confgen.lua: {s}", .{c.lua_tolstring(l, -1, null)});
+        std.log.err("loading confgen.lua: {s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("running confgen.lua: {s}", .{c.lua_tolstring(l, -1, null)});
+        std.log.err("running confgen.lua: {s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 

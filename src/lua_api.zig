@@ -86,7 +86,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     defer c.lua_settop(l, prevtop);
 
     if (c.luaL_loadbuffer(l, code.content.ptr, code.content.len, code.name) != 0) {
-        std.log.err("failed to load template: {s}", .{c.lua_tolstring(l, -1, null)});
+        std.log.err("failed to load template: {s}", .{ffi.luaToString(l, -1)});
 
         return error.LoadTemplate;
     }
@@ -111,7 +111,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("failed to run template: {s}", .{c.lua_tolstring(l, -1, null)});
+        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
 
         return error.RunTemplate;
     }
@@ -120,24 +120,21 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
 }
 
 fn lAddString(l: *c.lua_State) !c_int {
-    var outpath_len: usize = 0;
-    const outpath = c.luaL_checklstring(l, 1, &outpath_len);
-    var data_len: usize = 0;
-    const data = c.luaL_checklstring(l, 2, &data_len);
+    const outpath = ffi.luaCheckString(l, 1);
+    const data = ffi.luaCheckString(l, 2);
 
     const state = getState(l);
 
     try state.files.append(CgFile{
-        .outpath = try std.heap.c_allocator.dupe(u8, outpath[0..outpath_len]),
-        .content = .{ .string = try std.heap.c_allocator.dupe(u8, data[0..data_len]) },
+        .outpath = try std.heap.c_allocator.dupe(u8, outpath),
+        .content = .{ .string = try std.heap.c_allocator.dupe(u8, data) },
     });
 
     return 0;
 }
 
 fn lAddPath(l: *c.lua_State) !c_int {
-    var path_len: usize = 0;
-    const path = c.luaL_checklstring(l, 1, &path_len)[0..path_len];
+    const path = ffi.luaCheckString(l, 1);
 
     const state = getState(l);
 
@@ -175,12 +172,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
 fn lAddFile(l: *c.lua_State) !c_int {
     const argc = c.lua_gettop(l);
 
-    var inpath_len: usize = 0;
-    const inpath = c.luaL_checklstring(l, 1, &inpath_len)[0..inpath_len];
+    const inpath = ffi.luaCheckString(l, 1);
 
     const outpath = if (argc >= 2) blk: {
-        var outpath_len: usize = 0;
-        break :blk c.luaL_checklstring(l, 2, &outpath_len)[0..outpath_len];
+        break :blk ffi.luaCheckString(l, 2);
     } else blk: {
         if (std.mem.endsWith(u8, inpath, ".cgt")) {
             break :blk inpath[0 .. inpath.len - 4];
@@ -197,6 +192,10 @@ fn lAddFile(l: *c.lua_State) !c_int {
     });
 
     return 0;
+}
+
+fn lDoTemplate(l: *c.lua_State) !c_int {
+    _ = l;
 }
 
 pub const LTemplate = struct {
@@ -246,12 +245,11 @@ pub const LTemplate = struct {
 
         // call post processor
         if (c.lua_pcall(l, 1, 1, 0) != 0) {
-            std.log.err("running post processor: {s}", .{c.lua_tolstring(l, -1, null)});
+            std.log.err("running post processor: {s}", .{ffi.luaToString(l, -1)});
             return error.PostProcessor;
         }
 
-        var out_len: usize = 0;
-        const out = c.lua_tolstring(l, -1, &out_len)[0..out_len];
+        const out = ffi.luaToString(l, -1);
 
         return try std.heap.c_allocator.dupe(u8, out);
     }
@@ -283,9 +281,7 @@ pub const LTemplate = struct {
 
     fn lPushValue(l: *c.lua_State) !c_int {
         const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
-        const val = c.luaL_checklstring(l, 2, null);
-
-        try self.output.appendSlice(std.mem.span(val));
+        try self.output.appendSlice(ffi.luaCheckString(l, 2));
 
         return 0;
     }
