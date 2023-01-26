@@ -1,8 +1,10 @@
 const std = @import("std");
 const ffi = @import("ffi.zig");
 const c = ffi.c;
+const luagen = @import("luagen.zig");
 
-const TemplateCode = @import("luagen.zig").TemplateCode;
+const Parser = @import("Parser.zig");
+const TemplateCode = luagen.TemplateCode;
 
 pub const state_key = "cg_state";
 
@@ -61,6 +63,9 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
 
     c.lua_pushcfunction(l, ffi.luaFunc(lAddFile));
     c.lua_setfield(l, -2, "addFile");
+
+    c.lua_pushcfunction(l, ffi.luaFunc(lDoTemplate));
+    c.lua_setfield(l, -2, "doTemplate");
 
     // add cg table to globals
     c.lua_setglobal(l, "cg");
@@ -195,7 +200,76 @@ fn lAddFile(l: *c.lua_State) !c_int {
 }
 
 fn lDoTemplate(l: *c.lua_State) !c_int {
-    _ = l;
+    const source = ffi.luaCheckString(l, 1);
+
+    var source_name: []const u8 = "<dotemplate>";
+
+    // check if there is an option table argument, otherwise create empty table
+    if (c.lua_gettop(l) < 2) {
+        c.lua_newtable(l);
+    } else {
+        c.luaL_checktype(l, 2, c.LUA_TTABLE);
+    }
+
+    // opt field of option table is alternative opt to pass to template
+    c.lua_getfield(l, 2, "opt");
+    if (c.lua_isnil(l, -1)) {
+        c.lua_remove(l, -1);
+
+        // push default opt table
+        c.lua_getfield(l, c.LUA_GLOBALSINDEX, "cg");
+        c.lua_getfield(l, -1, "opt");
+        c.lua_remove(l, -2);
+    }
+
+    c.lua_getfield(l, 2, "name");
+    if (!c.lua_isnil(l, -1)) {
+        source_name = ffi.luaToString(l, -1);
+    }
+
+    var parser = Parser{ .str = source, .pos = 0 };
+    const tmpl_code = try luagen.generateLua(&parser, source_name);
+    defer tmpl_code.deinit();
+
+    if (c.luaL_loadbuffer(
+        l,
+        tmpl_code.content.ptr,
+        tmpl_code.content.len,
+        tmpl_code.name.ptr,
+    ) != 0) {
+        // TODO: turn this into a lua error
+        std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
+        return error.LoadTemplate;
+    }
+
+    // create env table
+    c.lua_newtable(l);
+
+    // add globals
+    c.lua_getfield(l, c.LUA_GLOBALSINDEX, "_G");
+    c.lua_setfield(l, -2, "_G");
+
+    // add opt
+    c.lua_pushvalue(l, -4);
+    c.lua_setfield(l, -2, "opt");
+
+    // add tmpl
+    const tmpl = (try LTemplate.init(tmpl_code)).push(l);
+    c.lua_setfield(l, -2, "tmpl");
+
+    _ = c.lua_setfenv(l, -2);
+
+    if (c.lua_pcall(l, 0, 0, 0) != 0) {
+        // TODO: turn this into a lua error
+        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
+        return error.RunTemplate;
+    }
+
+    const output = try tmpl.getOutput(l);
+    defer std.heap.c_allocator.free(output);
+
+    c.lua_pushlstring(l, output.ptr, output.len);
+    return 1;
 }
 
 pub const LTemplate = struct {
