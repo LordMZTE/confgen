@@ -1,11 +1,11 @@
 const std = @import("std");
+const args = @import("args");
 
 const ffi = @import("ffi.zig");
 const c = ffi.c;
 
 const luagen = @import("luagen.zig");
 const lapi = @import("lua_api.zig");
-const rootfile = @import("rootfile.zig");
 
 const Parser = @import("Parser.zig");
 
@@ -19,23 +19,85 @@ pub const std_options = struct {
     pub const log_level = if (@import("builtin").mode == .Debug) .debug else .info;
 };
 
-pub fn main() !void {
-    // TODO: add flag to emit generated lua files
-    if (std.os.argv.len != 2) {
-        // TODO: print usage
-        std.log.err("Expected one argument.", .{});
+const Args = struct {
+    /// Compile template to Lua for debugging.
+    compile: ?[]const u8 = null,
+
+    pub const shorthands = .{
+        .c = "compile",
+    };
+};
+
+const usage =
+    \\==== Confgen - Config File Template Engine ====
+    \\LordMZTE <lord@mzte.de>
+    \\
+    \\Options:
+    \\    --compile, -c                      Compile a template to Lua instead of running. Useful for debugging.
+    \\
+    \\Usage:
+    \\    confgen [CONFGENFILE] [OUTPATH]    Generate configs according the the supplied configuration file.
+;
+
+pub fn main() !u8 {
+    run() catch |e| {
+        switch (e) {
+            error.InvalidArgs => {
+                std.log.err(
+                    \\Invalid Arguments.
+                    \\{s}
+                , .{usage});
+            },
+            //error.Explained => {},
+            else => {
+                std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
+            },
+        }
+        return 1;
+    };
+
+    return 0;
+}
+
+pub fn run() !void {
+    const arg = try args.parseForCurrentProcess(Args, std.heap.c_allocator, .print);
+    defer arg.deinit();
+
+    if (arg.options.compile) |filepath| {
+        if (arg.positionals.len != 0) {
+            std.log.err("Expected 0 positional arguments, got {}.", .{arg.positionals.len});
+            return error.InvalidArgs;
+        }
+
+        const file = try std.fs.cwd().openFile(filepath, .{});
+        defer file.close();
+
+        const content = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
+        defer std.heap.c_allocator.free(content);
+
+        var parser = Parser{
+            .str = content,
+            .pos = 0,
+        };
+
+        const tmpl = try luagen.generateLua(&parser, filepath);
+        defer tmpl.deinit();
+
+        try std.io.getStdOut().writeAll(tmpl.content);
+
+        return;
+    }
+
+    if (arg.positionals.len != 2) {
+        std.log.err("Expected 2 positional arguments, got {}.", .{arg.positionals.len});
         return error.InvalidArgs;
     }
 
-    const conf_dir = (try rootfile.findRootDir()) orelse {
-        std.log.err("Couldn't find confgen.lua file!", .{});
-        return error.RootfileNotFound;
-    };
-    defer std.heap.c_allocator.free(conf_dir);
+    const cgfile = arg.positionals[0];
 
     var state = lapi.CgState{
-        .outpath = std.mem.span(std.os.argv[1]),
-        .rootpath = conf_dir,
+        .outpath = arg.positionals[1],
+        .rootpath = std.fs.path.dirname(cgfile) orelse ".",
         .files = std.ArrayList(lapi.CgFile).init(std.heap.c_allocator),
     };
     defer state.deinit();
@@ -43,19 +105,13 @@ pub fn main() !void {
     const l = try lapi.initLuaState(&state);
     defer c.lua_close(l);
 
-    const conf_file_path = try std.fs.path.joinZ(
-        std.heap.c_allocator,
-        &.{ conf_dir, "confgen.lua" },
-    );
-    defer std.heap.c_allocator.free(conf_file_path);
-
-    if (c.luaL_loadfile(l, conf_file_path.ptr) != 0) {
-        std.log.err("loading confgen.lua: {s}", .{ffi.luaToString(l, -1)});
+    if (c.luaL_loadfile(l, cgfile.ptr) != 0) {
+        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("running confgen.lua: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 

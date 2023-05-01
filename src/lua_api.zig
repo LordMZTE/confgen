@@ -48,6 +48,23 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     // open all lua libs
     c.luaL_openlibs(l);
 
+    // Add root path to package.path
+    c.lua_getglobal(l, "_G");
+    c.lua_getfield(l, -1, "package");
+
+    const root_luapath_prefix = try std.fmt.allocPrintZ(
+        std.heap.c_allocator,
+        "{s}/?.lua;",
+        .{cgstate.rootpath},
+    );
+    defer std.heap.c_allocator.free(root_luapath_prefix);
+
+    c.lua_pushlstring(l, root_luapath_prefix.ptr, root_luapath_prefix.len);
+    c.lua_getfield(l, -2, "path");
+    c.lua_concat(l, 2);
+    c.lua_setfield(l, -2, "path");
+    c.lua_pop(l, 2);
+
     // create opt table
     c.lua_newtable(l);
 
@@ -143,7 +160,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    var dir = try std.fs.cwd().openIterableDir(path, .{});
+    const resolved_path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, path });
+    defer std.heap.c_allocator.free(resolved_path);
+
+    var dir = try std.fs.cwd().openIterableDir(resolved_path, .{});
     defer dir.close();
 
     var iter = try dir.walk(std.heap.c_allocator);
@@ -179,9 +199,9 @@ fn lAddFile(l: *c.lua_State) !c_int {
 
     const inpath = ffi.luaCheckString(l, 1);
 
-    const outpath = if (argc >= 2) blk: {
-        break :blk ffi.luaCheckString(l, 2);
-    } else blk: {
+    const outpath = if (argc >= 2)
+        ffi.luaCheckString(l, 2)
+    else blk: {
         if (std.mem.endsWith(u8, inpath, ".cgt")) {
             break :blk inpath[0 .. inpath.len - 4];
         }

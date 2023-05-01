@@ -1,0 +1,11 @@
+.{
+    .name = "confgen",
+    .version = "0.0.0",
+
+    .dependencies = .{
+        .zig_args = .{
+            .url = "https://mzte.de/git/mirrors/zig-args/archive/cce1b8987723c155d1fa61c4e6cac717074a2e74.tar.gz",
+            .hash = "122087f17682383feb354fecb2505788fdced06639f34e750cf641909fc6dcd76801",
+        },
+    },
+}
