@@ -17,14 +17,33 @@ comptime {
 
 pub const std_options = struct {
     pub const log_level = if (@import("builtin").mode == .Debug) .debug else .info;
+
+    pub fn logFn(
+        comptime level: std.log.Level,
+        comptime scope: @TypeOf(.enum_literal),
+        comptime fmt: []const u8,
+        arguments: anytype,
+    ) void {
+        _ = scope;
+        const lvl_prefix = switch (level) {
+            .debug => "\x1b[1;34mD:\x1b[0m ",
+            .info => "\x1b[1;32mI:\x1b[0m ",
+            .warn => "\x1b[1;33mW:\x1b[0m ",
+            .err => "\x1b[1;31mE:\x1b[0m ",
+        };
+
+        std.io.getStdErr().writer().print(lvl_prefix ++ fmt ++ "\n", arguments) catch return;
+    }
 };
 
 const Args = struct {
     /// Compile template to Lua for debugging.
     compile: ?[]const u8 = null,
+    help: bool = false,
 
     pub const shorthands = .{
         .c = "compile",
+        .h = "help",
     };
 };
 
@@ -34,6 +53,7 @@ const usage =
     \\
     \\Options:
     \\    --compile, -c                      Compile a template to Lua instead of running. Useful for debugging.
+    \\    --help, -h                         Show this help
     \\
     \\Usage:
     \\    confgen [CONFGENFILE] [OUTPATH]    Generate configs according the the supplied configuration file.
@@ -62,6 +82,11 @@ pub fn main() !u8 {
 pub fn run() !void {
     const arg = try args.parseForCurrentProcess(Args, std.heap.c_allocator, .print);
     defer arg.deinit();
+
+    if (arg.options.help) {
+        try std.io.getStdOut().writeAll(usage);
+        return;
+    }
 
     if (arg.options.compile) |filepath| {
         if (arg.positionals.len != 0) {
@@ -120,9 +145,9 @@ pub fn run() !void {
 
     for (state.files.items) |file| {
         if (file.copy) {
-            std.log.info("copying {s}", .{file.outpath});
+            std.log.info("copying     {s}", .{file.outpath});
         } else {
-            std.log.info("generating {s}", .{file.outpath});
+            std.log.info("generating  {s}", .{file.outpath});
         }
         genfile(l, file, &content_buf) catch |e| {
             std.log.err("generating {s}: {}", .{ file.outpath, e });
