@@ -56,7 +56,7 @@ const usage =
     \\
     \\Options:
     \\    --compile, -c [TEMPLATE_FILE]      Compile a template to Lua instead of running. Useful for debugging.
-    \\    --json-opt, -j [CONFGENFILE]       Write the given fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
+    \\    --json-opt, -j [CONFGENFILE]       Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
     \\    --help, -h                         Show this help
     \\
     \\Usage:
@@ -138,17 +138,21 @@ pub fn run() !void {
         c.lua_getglobal(l, "cg");
         c.lua_getfield(l, -1, "opt");
 
-        try wstream.beginObject();
-        for (arg.positionals) |opt| {
-            try wstream.objectField(opt);
-            c.lua_getfield(l, -1, opt);
+        if (arg.positionals.len == 0) {
             try @import("json.zig").luaToJSON(l, &wstream);
+            c.lua_pop(l, 1);
+        } else {
+            try wstream.beginObject();
+            for (arg.positionals) |opt| {
+                try wstream.objectField(opt);
+                c.lua_getfield(l, -1, opt);
+                try @import("json.zig").luaToJSON(l, &wstream);
+            }
+            c.lua_pop(l, 2);
+            try wstream.endObject();
         }
-        try wstream.endObject();
 
         try bufwriter.writer().writeAll("\n");
-
-        c.lua_pop(l, 2);
 
         try bufwriter.flush();
 
