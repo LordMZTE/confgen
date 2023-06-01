@@ -1,5 +1,5 @@
 //! Tools for serialization of Lua values to JSON
-//! Used by the optjson subcommand
+//! Used by the --json-opt flag
 const std = @import("std");
 const ffi = @import("ffi.zig");
 const c = ffi.c;
@@ -30,13 +30,45 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
         },
         c.LUA_TSTRING => try stream.emitString(ffi.luaToString(l, -1)),
         c.LUA_TTABLE => {
-            try stream.beginObject();
+            // First, figure out whether this is a pure array table or if it has named keys.
+            const TableType = enum { empty, array, map };
+            var table_type = TableType.empty;
             c.lua_pushnil(l);
             while (c.lua_next(l, -2) != 0) {
-                try stream.objectField(ffi.luaToString(l, -2));
+                c.lua_pop(l, 1);
+                switch (c.lua_type(l, -1)) {
+                    c.LUA_TNUMBER => table_type = .array,
+                    else => {
+                        table_type = .map;
+                        c.lua_pop(l, 1);
+                        break;
+                    },
+                }
+            }
+
+            switch (table_type) {
+                .array => try stream.beginArray(),
+                .map, .empty => try stream.beginObject(),
+            }
+
+            c.lua_pushnil(l);
+            while (c.lua_next(l, -2) != 0) {
+                if (table_type == .array) {
+                    try stream.arrayElem();
+                } else {
+                    // Need to duplicate the key in order to call luaToString.
+                    // Direct call may break lua_next
+                    c.lua_pushvalue(l, -2);
+                    try stream.objectField(ffi.luaToString(l, -1));
+                    c.lua_pop(l, 1);
+                }
                 try luaToJSON(l, stream);
             }
-            try stream.endObject();
+
+            switch (table_type) {
+                .array => try stream.endArray(),
+                .map, .empty => try stream.endObject(),
+            }
         },
         else => unreachable,
     }
