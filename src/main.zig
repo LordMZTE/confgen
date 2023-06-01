@@ -39,10 +39,13 @@ pub const std_options = struct {
 const Args = struct {
     /// Compile template to Lua for debugging.
     compile: ?[]const u8 = null,
+    /// Dump options identified by positional arguments.
+    @"json-opt": ?[:0]const u8 = null,
     help: bool = false,
 
     pub const shorthands = .{
         .c = "compile",
+        .j = "json-opt",
         .h = "help",
     };
 };
@@ -52,11 +55,13 @@ const usage =
     \\LordMZTE <lord@mzte.de>
     \\
     \\Options:
-    \\    --compile, -c                      Compile a template to Lua instead of running. Useful for debugging.
+    \\    --compile, -c [TEMPLATE_FILE]      Compile a template to Lua instead of running. Useful for debugging.
+    \\    --json-opt, -j [CONFGENFILE]       Write the given fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
     \\    --help, -h                         Show this help
     \\
     \\Usage:
     \\    confgen [CONFGENFILE] [OUTPATH]    Generate configs according the the supplied configuration file.
+    \\
 ;
 
 pub fn main() !u8 {
@@ -113,6 +118,43 @@ pub fn run() !void {
         return;
     }
 
+    if (arg.options.@"json-opt") |cgfile| {
+        var state = lapi.CgState{
+            .outpath = null,
+            .rootpath = std.fs.path.dirname(cgfile) orelse ".",
+            .files = std.ArrayList(lapi.CgFile).init(std.heap.c_allocator),
+        };
+        defer state.deinit();
+
+        const l = try lapi.initLuaState(&state);
+        defer c.lua_close(l);
+
+        try loadCGFile(l, cgfile.ptr);
+
+        var bufwriter = std.io.bufferedWriter(std.io.getStdOut().writer());
+        var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), 64)
+            .init(bufwriter.writer());
+
+        c.lua_getglobal(l, "cg");
+        c.lua_getfield(l, -1, "opt");
+
+        try wstream.beginObject();
+        for (arg.positionals) |opt| {
+            try wstream.objectField(opt);
+            c.lua_getfield(l, -1, opt);
+            try @import("json.zig").luaToJSON(l, &wstream);
+        }
+        try wstream.endObject();
+
+        try bufwriter.writer().writeAll("\n");
+
+        c.lua_pop(l, 2);
+
+        try bufwriter.flush();
+
+        return;
+    }
+
     if (arg.positionals.len != 2) {
         std.log.err("Expected 2 positional arguments, got {}.", .{arg.positionals.len});
         return error.InvalidArgs;
@@ -130,15 +172,7 @@ pub fn run() !void {
     const l = try lapi.initLuaState(&state);
     defer c.lua_close(l);
 
-    if (c.luaL_loadfile(l, cgfile.ptr) != 0) {
-        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
-        return error.RootfileExec;
-    }
-
-    if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
-        return error.RootfileExec;
-    }
+    try loadCGFile(l, cgfile.ptr);
 
     var content_buf = std.ArrayList(u8).init(std.heap.c_allocator);
     defer content_buf.deinit();
@@ -171,7 +205,7 @@ fn genfile(
 
         const to_path = try std.fs.path.join(
             std.heap.c_allocator,
-            &.{ state.outpath, file.outpath },
+            &.{ state.outpath.?, file.outpath },
         );
         defer std.heap.c_allocator.free(to_path);
 
@@ -218,7 +252,7 @@ fn genfile(
 
     const path = try std.fs.path.join(
         std.heap.c_allocator,
-        &.{ state.outpath, file.outpath },
+        &.{ state.outpath.?, file.outpath },
     );
     defer std.heap.c_allocator.free(path);
 
@@ -230,4 +264,16 @@ fn genfile(
     defer outfile.close();
 
     try outfile.writeAll(out);
+}
+
+fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
+    if (c.luaL_loadfile(l, cgfile) != 0) {
+        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
+        return error.RootfileExec;
+    }
+
+    if (c.lua_pcall(l, 0, 0, 0) != 0) {
+        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
+        return error.RootfileExec;
+    }
 }

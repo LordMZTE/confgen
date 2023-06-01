@@ -9,7 +9,7 @@ const TemplateCode = luagen.TemplateCode;
 pub const state_key = "cg_state";
 
 pub const CgState = struct {
-    outpath: []const u8,
+    outpath: ?[]const u8,
     rootpath: []const u8,
     files: std.ArrayList(CgFile),
 
@@ -147,6 +147,9 @@ fn lAddString(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
+    if (state.outpath == null)
+        return 0;
+
     try state.files.append(CgFile{
         .outpath = try std.heap.c_allocator.dupe(u8, outpath),
         .content = .{ .string = try std.heap.c_allocator.dupe(u8, data) },
@@ -160,6 +163,9 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
+    if (state.outpath == null)
+        return 0;
+
     const resolved_path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, path });
     defer std.heap.c_allocator.free(resolved_path);
 
@@ -170,7 +176,7 @@ fn lAddPath(l: *c.lua_State) !c_int {
     defer iter.deinit();
 
     while (try iter.next()) |entry| {
-        if (entry.kind == .Directory)
+        if (entry.kind == .directory)
             continue;
 
         const outbase = if (std.mem.endsWith(u8, entry.path, ".cgt"))
@@ -195,6 +201,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
 }
 
 fn lAddFile(l: *c.lua_State) !c_int {
+    const state = getState(l);
+    if (state.outpath == null)
+        return 0;
+
     const argc = c.lua_gettop(l);
 
     const inpath = ffi.luaCheckString(l, 1);
@@ -207,8 +217,6 @@ fn lAddFile(l: *c.lua_State) !c_int {
         }
         break :blk inpath;
     };
-
-    const state = getState(l);
 
     try state.files.append(.{
         .outpath = try std.heap.c_allocator.dupe(u8, outpath),
