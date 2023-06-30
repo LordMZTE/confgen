@@ -100,7 +100,7 @@ pub fn getState(l: *c.lua_State) *CgState {
     c.lua_getfield(l, c.LUA_REGISTRYINDEX, state_key);
     const state_ptr = c.lua_touserdata(l, -1);
     c.lua_pop(l, 1);
-    return @ptrCast(*CgState, @alignCast(@alignOf(*CgState), state_ptr));
+    return @ptrCast(@alignCast(state_ptr));
 }
 
 pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
@@ -116,9 +116,11 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     // create template environment
     c.lua_newtable(l);
 
-    // initialize environment
+    // initialize environment metatable
+    c.lua_createtable(l, 0, 1);
     c.lua_getglobal(l, "_G");
-    c.lua_setfield(l, -2, "_G");
+    c.lua_setfield(l, -2, "__index");
+    _ = c.lua_setmetatable(l, -2);
 
     // add cg.opt to context
     c.lua_getglobal(l, "cg");

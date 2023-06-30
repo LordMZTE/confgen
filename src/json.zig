@@ -20,7 +20,7 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
         c.LUA_TNUMBER => {
             const n = c.lua_tonumber(l, -1);
             if (@floor(n) == n) {
-                try stream.emitNumber(@floatToInt(i32, n));
+                try stream.emitNumber(@as(c_int, @intFromFloat(n)));
             } else {
                 try stream.emitNumber(n);
             }
