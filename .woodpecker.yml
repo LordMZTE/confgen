@@ -4,3 +4,15 @@ pipeline:
     commands:
       - apk add luajit-dev
       - zig build test
+      - zig build -Doptimize=ReleaseFast
+
+  publish:
+    image: plugins/gitea-release
+    when:
+      branch: master
+      event: tag
+      settings:
+        base_url: https://mzte.de/git
+        api_key:
+          from_secret: forgejo_key
+        files: zig-out/bin/confgen
