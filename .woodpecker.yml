@@ -7,10 +7,10 @@ pipeline:
       - zig build -Doptimize=ReleaseFast
 
   publish:
-    image: plugins/gitea-release
+    image: woodpeckerci/plugin-gitea-release
     when:
-      branch: master
       event: tag
+      branch: master
     settings:
       base_url: https://mzte.de/git
       api_key:
