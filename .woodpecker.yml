@@ -2,5 +2,5 @@ pipeline:
   build:
     image: eloitor/zig:master
     commands:
-      - apk install luajit
+      - apk add -y luajit
       - zig build test
