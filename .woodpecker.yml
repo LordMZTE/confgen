@@ -8,11 +8,11 @@ pipeline:
 
   publish:
     image: woodpeckerci/plugin-gitea-release
-    when:
-      event: tag
-      branch: master
     settings:
       base_url: https://mzte.de/git
       api_key:
         from_secret: forgejo_key
+      title: tag-${CI_COMMIT_TAG}
       files: zig-out/bin/confgen
+    when:
+      event: tag
