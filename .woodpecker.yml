@@ -1,0 +1,6 @@
+pipeline:
+  build:
+    image: eloitor/zig:master
+    commands:
+      - apk install luajit
+      - zig build test
