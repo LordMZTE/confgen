@@ -11,8 +11,8 @@ pipeline:
     when:
       branch: master
       event: tag
-      settings:
-        base_url: https://mzte.de/git
-        api_key:
-          from_secret: forgejo_key
-        files: zig-out/bin/confgen
+    settings:
+      base_url: https://mzte.de/git
+      api_key:
+        from_secret: forgejo_key
+      files: zig-out/bin/confgen
