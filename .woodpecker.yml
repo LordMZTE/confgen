@@ -1,8 +1,15 @@
 pipeline:
   build:
-    image: eloitor/zig:master
+    image: debian # not using alpine so we get a glibc build
     commands:
-      - apk add luajit-dev
+      - apt update
+      - apt install -y curl jq xz-utils libluajit-5.1-dev libluajit-5.1-2
+
+      # Install Zig
+      - curl $(curl https://ziglang.org/download/index.json | jq -r '.master."x86_64-linux".tarball') -o /tmp/zig.tar.xz
+      - tar xf /tmp/zig.tar.xz --directory=/tmp
+      - export PATH="$(echo /tmp/zig-*):$PATH"
+
       - zig build test
       - zig build -Doptimize=ReleaseFast
 
