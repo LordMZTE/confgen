@@ -15,20 +15,20 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
         c.LUA_TTHREAD,
         c.LUA_TUSERDATA,
         c.LUA_TLIGHTUSERDATA,
-        => try stream.emitNull(),
+        => try stream.write(null),
 
         c.LUA_TNUMBER => {
             const n = c.lua_tonumber(l, -1);
             if (@floor(n) == n) {
-                try stream.emitNumber(@as(c_int, @intFromFloat(n)));
+                try stream.write(@as(c_int, @intFromFloat(n)));
             } else {
-                try stream.emitNumber(n);
+                try stream.write(n);
             }
         },
         c.LUA_TBOOLEAN => {
-            try stream.emitBool(c.lua_toboolean(l, -1) != 0);
+            try stream.write(c.lua_toboolean(l, -1) != 0);
         },
-        c.LUA_TSTRING => try stream.emitString(ffi.luaToString(l, -1)),
+        c.LUA_TSTRING => try stream.write(ffi.luaToString(l, -1)),
         c.LUA_TTABLE => {
             // First, figure out whether this is a pure array table or if it has named keys.
             const TableType = enum { empty, array, map };
@@ -53,9 +53,7 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
 
             c.lua_pushnil(l);
             while (c.lua_next(l, -2) != 0) {
-                if (table_type == .array) {
-                    try stream.arrayElem();
-                } else {
+                if (table_type != .array) {
                     // Need to duplicate the key in order to call luaToString.
                     // Direct call may break lua_next
                     c.lua_pushvalue(l, -2);
