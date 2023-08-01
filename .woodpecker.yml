@@ -1,14 +1,9 @@
-pipeline:
+steps:
   build:
-    image: debian # not using alpine so we get a glibc build
+    image: git.mzte.de/lordmzte/zig-build
     commands:
       - apt update
-      - apt install -y curl jq xz-utils libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev
-
-      # Install Zig
-      - curl $(curl https://ziglang.org/download/index.json | jq -r '.master."x86_64-linux".tarball') -o /tmp/zig.tar.xz
-      - tar xf /tmp/zig.tar.xz --directory=/tmp
-      - export PATH="$(echo /tmp/zig-*):$PATH"
+      - apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev
 
       - zig build test
       - zig build -Doptimize=ReleaseFast
@@ -16,7 +11,7 @@ pipeline:
   publish:
     image: woodpeckerci/plugin-gitea-release
     settings:
-      base_url: https://mzte.de/git
+      base_url: https://git.mzte.de
       api_key:
         from_secret: forgejo_key
       title: tag-${CI_COMMIT_TAG}
