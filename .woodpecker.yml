@@ -5,6 +5,7 @@ steps:
       - apt update
       - apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev
 
+      - zig fmt --check .
       - zig build test
       - zig build -Doptimize=ReleaseFast
 
