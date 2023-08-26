@@ -5,7 +5,7 @@
     .dependencies = .{
         .zig_args = .{
             .url = "https://mzte.de/git/mirrors/zig-args/archive/91d1e89fb89a4d01dec7c9aec95b0a324080ebcc.tar.gz",
-            .hash = "12203d04cafc97f952d74cdb077e74c0ab3414f9f6b5fbd159112c62bfa584a0dbed",
+            .hash = "1220206c698a1890d742a8b98acb16db99275d16f2e7fe2046c3d8f2249ed267ca71",
         },
     },
 }
