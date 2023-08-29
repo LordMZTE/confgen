@@ -181,6 +181,7 @@ pub fn run() !void {
     var content_buf = std.ArrayList(u8).init(std.heap.c_allocator);
     defer content_buf.deinit();
 
+    var errors = false;
     for (state.files.items) |file| {
         if (file.copy) {
             std.log.info("copying     {s}", .{file.outpath});
@@ -188,9 +189,12 @@ pub fn run() !void {
             std.log.info("generating  {s}", .{file.outpath});
         }
         genfile(l, file, &content_buf) catch |e| {
+            errors = true;
             std.log.err("generating {s}: {}", .{ file.outpath, e });
         };
     }
+
+    lapi.callOnDoneCallbacks(l, errors);
 }
 
 fn genfile(

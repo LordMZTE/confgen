@@ -7,6 +7,7 @@ const Parser = @import("Parser.zig");
 const TemplateCode = luagen.TemplateCode;
 
 pub const state_key = "cg_state";
+pub const on_done_callbacks_key = "on_done_callbacks";
 
 pub const CgState = struct {
     outpath: ?[]const u8,
@@ -84,12 +85,19 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_pushcfunction(l, ffi.luaFunc(lDoTemplate));
     c.lua_setfield(l, -2, "doTemplate");
 
+    c.lua_pushcfunction(l, ffi.luaFunc(lOnDone));
+    c.lua_setfield(l, -2, "onDone");
+
     // add cg table to globals
     c.lua_setglobal(l, "cg");
 
     // add state to registry
     c.lua_pushlightuserdata(l, cgstate);
     c.lua_setfield(l, c.LUA_REGISTRYINDEX, state_key);
+
+    // add empty table for onDone callbacks to registry
+    c.lua_newtable(l);
+    c.lua_setfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
 
     LTemplate.initMetatable(l);
 
@@ -141,6 +149,24 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     }
 
     return try tmpl.getOutput(l);
+}
+
+pub fn callOnDoneCallbacks(l: *c.lua_State, errors: bool) void {
+    c.lua_getfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
+
+    const len = c.lua_objlen(l, -1);
+    var idx: usize = 1;
+    while (idx <= len) : (idx += 1) {
+        c.lua_rawgeti(l, -1, @intCast(idx));
+        c.lua_pushboolean(l, @intFromBool(errors));
+        if (c.lua_pcall(l, 1, 0, 0) != 0) {
+            const err_s = ffi.luaToString(l, -1);
+            std.log.err("running onDone callback: {s}", .{err_s});
+            c.lua_pop(l, 1);
+        }
+    }
+
+    c.lua_pop(l, 1);
 }
 
 fn lAddString(l: *c.lua_State) !c_int {
@@ -300,6 +326,19 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
     c.lua_pushlstring(l, output.ptr, output.len);
     return 1;
+}
+
+pub fn lOnDone(l: *c.lua_State) !c_int {
+    c.luaL_checktype(l, 1, c.LUA_TFUNCTION);
+
+    c.lua_getfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
+    const new_idx = c.lua_objlen(l, 1) + 1;
+
+    c.lua_pushvalue(l, 1);
+    c.lua_rawseti(l, -2, @intCast(new_idx));
+    c.lua_pop(l, 1);
+    
+    return 0;
 }
 
 pub const LTemplate = struct {
