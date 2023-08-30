@@ -337,7 +337,7 @@ pub fn lOnDone(l: *c.lua_State) !c_int {
     c.lua_pushvalue(l, 1);
     c.lua_rawseti(l, -2, @intCast(new_idx));
     c.lua_pop(l, 1);
-    
+
     return 0;
 }
 
