@@ -132,8 +132,9 @@ pub fn run() !void {
         try loadCGFile(l, cgfile.ptr);
 
         var bufwriter = std.io.bufferedWriter(std.io.getStdOut().writer());
-        var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), .checked_to_arbitrary_depth)
+        var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), .assumed_correct)
             .init(std.heap.c_allocator, bufwriter.writer(), .{ .whitespace = .indent_2 });
+        defer wstream.deinit();
 
         c.lua_getglobal(l, "cg");
         c.lua_getfield(l, -1, "opt");

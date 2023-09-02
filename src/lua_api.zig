@@ -88,6 +88,9 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_pushcfunction(l, ffi.luaFunc(lOnDone));
     c.lua_setfield(l, -2, "onDone");
 
+    c.lua_pushcfunction(l, ffi.luaFunc(lToJSON));
+    c.lua_setfield(l, -2, "toJSON");
+
     // add cg table to globals
     c.lua_setglobal(l, "cg");
 
@@ -339,6 +342,30 @@ pub fn lOnDone(l: *c.lua_State) !c_int {
     c.lua_pop(l, 1);
 
     return 0;
+}
+
+pub fn lToJSON(l: *c.lua_State) !c_int {
+    c.luaL_checkany(l, 1);
+    const pretty = if (c.lua_gettop(l) >= 2) c.lua_toboolean(l, 2) != 0 else false;
+
+    // If you're doing more than 16KiB of JSON, open an issue
+    // and bring a VERY good explanation with you :D
+    var buf: [1024 * 16]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    var wstream = std.json.WriteStream(@TypeOf(fbs.writer()), .assumed_correct).init(
+        std.heap.c_allocator,
+        fbs.writer(),
+        .{ .whitespace = if (pretty) .indent_2 else .minified },
+    );
+    defer wstream.deinit();
+
+    c.lua_pushvalue(l, 1);
+    try @import("json.zig").luaToJSON(l, &wstream);
+
+    const written = fbs.getWritten();
+    c.lua_pushlstring(l, written.ptr, written.len);
+    return 1;
 }
 
 pub const LTemplate = struct {
