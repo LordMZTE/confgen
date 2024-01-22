@@ -12,12 +12,12 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "confgen",
         .root_source_file = .{ .path = "src/main.zig" },
+        .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
 
-    exe.strip = optimize != .Debug and optimize != .ReleaseSafe;
-    setupExe(exe, zig_args);
+    setupModule(&exe.root_module, zig_args);
 
     b.installArtifact(exe);
 
@@ -32,20 +32,18 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
+        .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
-    setupExe(exe_tests, zig_args);
+    setupModule(&exe_tests.root_module, zig_args);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
 }
 
-fn setupExe(exe: *std.Build.CompileStep, zig_args: *std.Build.Module) void {
-    exe.linkLibC();
-    exe.linkSystemLibrary("luajit");
-
-    exe.addModule("args", zig_args);
-
-    exe.unwind_tables = true;
+fn setupModule(mod: *std.Build.Module, zig_args: *std.Build.Module) void {
+    mod.linkSystemLibrary("luajit", .{});
+    mod.addImport("args", zig_args);
+    mod.unwind_tables = true;
 }

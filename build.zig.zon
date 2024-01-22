@@ -4,8 +4,10 @@
 
     .dependencies = .{
         .zig_args = .{
-            .url = "https://mzte.de/git/mirrors/zig-args/archive/91d1e89fb89a4d01dec7c9aec95b0a324080ebcc.tar.gz",
-            .hash = "12203d04cafc97f952d74cdb077e74c0ab3414f9f6b5fbd159112c62bfa584a0dbed",
+            .url = "git+https://git.mzte.de/mirrors/zig-args.git#89f18a104d9c13763b90e97d6b4ce133da8a3e2b",
+            .hash = "12203ded54c85878eea7f12744066dcb4397177395ac49a7b2aa365bf6047b623829",
         },
     },
+
+    .paths = .{""},
 }

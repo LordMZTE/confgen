@@ -200,7 +200,7 @@ fn lAddPath(l: *c.lua_State) !c_int {
     const resolved_path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, path });
     defer std.heap.c_allocator.free(resolved_path);
 
-    var dir = try std.fs.cwd().openIterableDir(resolved_path, .{});
+    var dir = try std.fs.cwd().openDir(resolved_path, .{ .iterate = true });
     defer dir.close();
 
     var iter = try dir.walk(std.heap.c_allocator);
