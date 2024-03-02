@@ -15,25 +15,27 @@ comptime {
     }
 }
 
-pub const std_options = struct {
-    pub const log_level = if (@import("builtin").mode == .Debug) .debug else .info;
+pub const std_options = std.Options{
+    .log_level = if (@import("builtin").mode == .Debug) .debug else .info,
 
-    pub fn logFn(
-        comptime level: std.log.Level,
-        comptime scope: @TypeOf(.enum_literal),
-        comptime fmt: []const u8,
-        arguments: anytype,
-    ) void {
-        _ = scope;
-        const lvl_prefix = switch (level) {
-            .debug => "\x1b[1;34mD:\x1b[0m ",
-            .info => "\x1b[1;32mI:\x1b[0m ",
-            .warn => "\x1b[1;33mW:\x1b[0m ",
-            .err => "\x1b[1;31mE:\x1b[0m ",
-        };
+    .logFn = struct {
+        pub fn logFn(
+            comptime level: std.log.Level,
+            comptime scope: @TypeOf(.enum_literal),
+            comptime fmt: []const u8,
+            arguments: anytype,
+        ) void {
+            _ = scope;
+            const lvl_prefix = switch (level) {
+                .debug => "\x1b[1;34mD:\x1b[0m ",
+                .info => "\x1b[1;32mI:\x1b[0m ",
+                .warn => "\x1b[1;33mW:\x1b[0m ",
+                .err => "\x1b[1;31mE:\x1b[0m ",
+            };
 
-        std.io.getStdErr().writer().print(lvl_prefix ++ fmt ++ "\n", arguments) catch return;
-    }
+            std.io.getStdErr().writer().print(lvl_prefix ++ fmt ++ "\n", arguments) catch return;
+        }
+    }.logFn,
 };
 
 const Args = struct {
