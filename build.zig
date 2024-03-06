@@ -9,41 +9,48 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }).module("args");
 
-    const exe = b.addExecutable(.{
-        .name = "confgen",
-        .root_source_file = .{ .path = "src/main.zig" },
+    const libcg = b.createModule(.{
+        .root_source_file = .{ .path = "libcg/main.zig" },
         .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
 
-    setupModule(&exe.root_module, zig_args);
+    // required for luajit errors
+    libcg.unwind_tables = true;
+    libcg.linkSystemLibrary("luajit", .{});
 
-    b.installArtifact(exe);
+    const confgen_exe = b.addExecutable(.{
+        .name = "confgen",
+        .root_source_file = .{ .path = "confgen/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
+    confgen_exe.root_module.addImport("args", zig_args);
+    confgen_exe.root_module.addImport("libcg", libcg);
+
+    b.installArtifact(confgen_exe);
+
+    const run_confgen_cmd = b.addRunArtifact(confgen_exe);
+    run_confgen_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
-        run_cmd.addArgs(args);
+        run_confgen_cmd.addArgs(args);
     }
 
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    const run_confgen_step = b.step("run-confgen", "Run the confgen binary");
+    run_confgen_step.dependOn(&run_confgen_cmd.step);
 
-    const exe_tests = b.addTest(.{
+    const exe_confgen_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
-    setupModule(&exe_tests.root_module, zig_args);
+    exe_confgen_tests.root_module.addImport("args", zig_args);
+    exe_confgen_tests.root_module.addImport("libcg", libcg);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&b.addRunArtifact(exe_tests).step);
+    test_step.dependOn(&b.addRunArtifact(exe_confgen_tests).step);
 }
 
-fn setupModule(mod: *std.Build.Module, zig_args: *std.Build.Module) void {
-    mod.linkSystemLibrary("luajit", .{});
-    mod.addImport("args", zig_args);
-    mod.unwind_tables = true;
-}

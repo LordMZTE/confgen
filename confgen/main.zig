@@ -1,13 +1,6 @@
 const std = @import("std");
 const args = @import("args");
-
-const ffi = @import("ffi.zig");
-const c = ffi.c;
-
-const luagen = @import("luagen.zig");
-const lapi = @import("lua_api.zig");
-
-const Parser = @import("Parser.zig");
+const libcg = @import("libcg");
 
 comptime {
     if (@import("builtin").is_test) {
@@ -18,24 +11,7 @@ comptime {
 pub const std_options = std.Options{
     .log_level = if (@import("builtin").mode == .Debug) .debug else .info,
 
-    .logFn = struct {
-        pub fn logFn(
-            comptime level: std.log.Level,
-            comptime scope: @TypeOf(.enum_literal),
-            comptime fmt: []const u8,
-            arguments: anytype,
-        ) void {
-            _ = scope;
-            const lvl_prefix = switch (level) {
-                .debug => "\x1b[1;34mD:\x1b[0m ",
-                .info => "\x1b[1;32mI:\x1b[0m ",
-                .warn => "\x1b[1;33mW:\x1b[0m ",
-                .err => "\x1b[1;31mE:\x1b[0m ",
-            };
-
-            std.io.getStdErr().writer().print(lvl_prefix ++ fmt ++ "\n", arguments) catch return;
-        }
-    }.logFn,
+    .logFn = libcg.logFn,
 };
 
 const Args = struct {
@@ -107,12 +83,12 @@ pub fn run() !void {
         const content = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
         defer std.heap.c_allocator.free(content);
 
-        var parser = Parser{
+        var parser = libcg.Parser{
             .str = content,
             .pos = 0,
         };
 
-        const tmpl = try luagen.generateLua(&parser, filepath);
+        const tmpl = try libcg.luagen.generateLua(&parser, filepath);
         defer tmpl.deinit();
 
         try std.io.getStdOut().writeAll(tmpl.content);
@@ -121,15 +97,15 @@ pub fn run() !void {
     }
 
     if (arg.options.@"json-opt") |cgfile| {
-        var state = lapi.CgState{
+        var state = libcg.luaapi.CgState{
             .outpath = null,
             .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-            .files = std.ArrayList(lapi.CgFile).init(std.heap.c_allocator),
+            .files = std.ArrayList(libcg.luaapi.CgFile).init(std.heap.c_allocator),
         };
         defer state.deinit();
 
-        const l = try lapi.initLuaState(&state);
-        defer c.lua_close(l);
+        const l = try libcg.luaapi.initLuaState(&state);
+        defer libcg.c.lua_close(l);
 
         try loadCGFile(l, cgfile.ptr);
 
@@ -138,20 +114,20 @@ pub fn run() !void {
             .init(std.heap.c_allocator, bufwriter.writer(), .{ .whitespace = .indent_2 });
         defer wstream.deinit();
 
-        c.lua_getglobal(l, "cg");
-        c.lua_getfield(l, -1, "opt");
+        libcg.c.lua_getglobal(l, "cg");
+        libcg.c.lua_getfield(l, -1, "opt");
 
         if (arg.positionals.len == 0) {
-            try @import("json.zig").luaToJSON(l, &wstream);
-            c.lua_pop(l, 1);
+            try libcg.json.luaToJSON(l, &wstream);
+            libcg.c.lua_pop(l, 1);
         } else {
             try wstream.beginObject();
             for (arg.positionals) |opt| {
                 try wstream.objectField(opt);
-                c.lua_getfield(l, -1, opt);
-                try @import("json.zig").luaToJSON(l, &wstream);
+                libcg.c.lua_getfield(l, -1, opt);
+                try libcg.json.luaToJSON(l, &wstream);
             }
-            c.lua_pop(l, 2);
+            libcg.c.lua_pop(l, 2);
             try wstream.endObject();
         }
 
@@ -169,15 +145,15 @@ pub fn run() !void {
 
     const cgfile = arg.positionals[0];
 
-    var state = lapi.CgState{
+    var state = libcg.luaapi.CgState{
         .outpath = arg.positionals[1],
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-        .files = std.ArrayList(lapi.CgFile).init(std.heap.c_allocator),
+        .files = std.ArrayList(libcg.luaapi.CgFile).init(std.heap.c_allocator),
     };
     defer state.deinit();
 
-    const l = try lapi.initLuaState(&state);
-    defer c.lua_close(l);
+    const l = try libcg.luaapi.initLuaState(&state);
+    defer libcg.c.lua_close(l);
 
     try loadCGFile(l, cgfile.ptr);
 
@@ -197,15 +173,15 @@ pub fn run() !void {
         };
     }
 
-    lapi.callOnDoneCallbacks(l, errors);
+    libcg.luaapi.callOnDoneCallbacks(l, errors);
 }
 
 fn genfile(
-    l: *c.lua_State,
-    file: lapi.CgFile,
+    l: *libcg.c.lua_State,
+    file: libcg.luaapi.CgFile,
     content_buf: *std.ArrayList(u8),
 ) !void {
-    const state = lapi.getState(l);
+    const state = libcg.luaapi.getState(l);
 
     if (file.copy) {
         const from_path = try std.fs.path.join(
@@ -250,15 +226,15 @@ fn genfile(
         },
     }
 
-    var parser = Parser{
+    var parser = libcg.Parser{
         .str = content,
         .pos = 0,
     };
 
-    const tmpl = try luagen.generateLua(&parser, fname orelse file.outpath);
+    const tmpl = try libcg.luagen.generateLua(&parser, fname orelse file.outpath);
     defer tmpl.deinit();
 
-    const out = try lapi.generate(l, tmpl);
+    const out = try libcg.luaapi.generate(l, tmpl);
     defer std.heap.c_allocator.free(out);
 
     const path = try std.fs.path.join(
@@ -277,14 +253,14 @@ fn genfile(
     try outfile.writeAll(out);
 }
 
-fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
-    if (c.luaL_loadfile(l, cgfile) != 0) {
-        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
+fn loadCGFile(l: *libcg.c.lua_State, cgfile: [*:0]const u8) !void {
+    if (libcg.c.luaL_loadfile(l, cgfile) != 0) {
+        std.log.err("loading confgen file: {s}", .{libcg.ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 
-    if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
+    if (libcg.c.lua_pcall(l, 0, 0, 0) != 0) {
+        std.log.err("running confgen file: {s}", .{libcg.ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 }
