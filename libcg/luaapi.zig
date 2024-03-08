@@ -10,30 +10,29 @@ pub const state_key = "cg_state";
 pub const on_done_callbacks_key = "on_done_callbacks";
 
 pub const CgState = struct {
-    outpath: ?[]const u8,
     rootpath: []const u8,
-    files: std.ArrayList(CgFile),
+    files: std.StringHashMap(CgFile),
 
     pub fn deinit(self: *CgState) void {
-        for (self.files.items) |*file| {
-            file.deinit();
+        var iter = self.files.iterator();
+        while (iter.next()) |kv| {
+            self.files.allocator.free(kv.key_ptr.*);
+            kv.value_ptr.*.deinit(self.files.allocator);
         }
         self.files.deinit();
     }
 };
 
 pub const CgFile = struct {
-    outpath: []const u8,
     content: CgFileContent,
 
     /// If set, this is a normal file that should just be copied.
     copy: bool = false,
 
-    pub fn deinit(self: *CgFile) void {
-        std.heap.c_allocator.free(self.outpath);
+    pub fn deinit(self: CgFile, alloc: std.mem.Allocator) void {
         switch (self.content) {
-            .path => |x| std.heap.c_allocator.free(x),
-            .string => |x| std.heap.c_allocator.free(x),
+            .path => |x| alloc.free(x),
+            .string => |x| alloc.free(x),
         }
     }
 };
@@ -54,11 +53,11 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_getfield(l, -1, "package");
 
     const root_luapath_prefix = try std.fmt.allocPrintZ(
-        std.heap.c_allocator,
+        cgstate.files.allocator,
         "{s}/?.lua;",
         .{cgstate.rootpath},
     );
-    defer std.heap.c_allocator.free(root_luapath_prefix);
+    defer cgstate.files.allocator.free(root_luapath_prefix);
 
     c.lua_pushlstring(l, root_luapath_prefix.ptr, root_luapath_prefix.len);
     c.lua_getfield(l, -2, "path");
@@ -107,6 +106,18 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     return l;
 }
 
+pub fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
+    if (c.luaL_loadfile(l, cgfile) != 0) {
+        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
+        return error.RootfileExec;
+    }
+
+    if (c.lua_pcall(l, 0, 0, 0) != 0) {
+        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
+        return error.RootfileExec;
+    }
+}
+
 pub fn getState(l: *c.lua_State) *CgState {
     c.lua_getfield(l, c.LUA_REGISTRYINDEX, state_key);
     const state_ptr = c.lua_touserdata(l, -1);
@@ -115,6 +126,8 @@ pub fn getState(l: *c.lua_State) *CgState {
 }
 
 pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
+    const state = getState(l);
+
     const prevtop = c.lua_gettop(l);
     defer c.lua_settop(l, prevtop);
 
@@ -140,7 +153,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
     c.lua_pop(l, 1);
 
     // initialize template
-    const tmpl = (try LTemplate.init(code)).push(l);
+    const tmpl = (try LTemplate.init(code, state.files.allocator)).push(l);
 
     c.lua_setfield(l, -2, "tmpl");
     _ = c.lua_setfenv(l, -2);
@@ -178,14 +191,18 @@ fn lAddString(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    if (state.outpath == null)
-        return 0;
+    const outpath_d = try state.files.allocator.dupe(u8, outpath);
+    errdefer state.files.allocator.free(outpath_d);
 
-    try state.files.append(CgFile{
-        .outpath = try std.heap.c_allocator.dupe(u8, outpath),
-        .content = .{ .string = try std.heap.c_allocator.dupe(u8, data) },
-    });
+    const data_d = try state.files.allocator.dupe(u8, data);
+    errdefer state.files.allocator.free(data_d);
 
+    if (try state.files.fetchPut(outpath_d, CgFile{
+        .content = .{ .string = data_d },
+    })) |old| {
+        state.files.allocator.free(old.key);
+        old.value.deinit(state.files.allocator);
+    }
     return 0;
 }
 
@@ -194,16 +211,13 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    if (state.outpath == null)
-        return 0;
-
-    const resolved_path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, path });
-    defer std.heap.c_allocator.free(resolved_path);
+    const resolved_path = try std.fs.path.join(state.files.allocator, &.{ state.rootpath, path });
+    defer state.files.allocator.free(resolved_path);
 
     var dir = try std.fs.cwd().openDir(resolved_path, .{ .iterate = true });
     defer dir.close();
 
-    var iter = try dir.walk(std.heap.c_allocator);
+    var iter = try dir.walk(state.files.allocator);
     defer iter.deinit();
 
     while (try iter.next()) |entry| {
@@ -215,17 +229,19 @@ fn lAddPath(l: *c.lua_State) !c_int {
         else
             entry.path;
 
-        const outpath = try std.fs.path.join(std.heap.c_allocator, &.{ path, outbase });
-        errdefer std.heap.c_allocator.free(outpath);
+        const outpath = try std.fs.path.join(state.files.allocator, &.{ path, outbase });
+        errdefer state.files.allocator.free(outpath);
 
-        const inpath = try std.fs.path.join(std.heap.c_allocator, &.{ path, entry.path });
-        errdefer std.heap.c_allocator.free(inpath);
+        const inpath = try std.fs.path.join(state.files.allocator, &.{ path, entry.path });
+        errdefer state.files.allocator.free(inpath);
 
-        try state.files.append(.{
-            .outpath = outpath,
+        if (try state.files.fetchPut(outpath, .{
             .content = .{ .path = inpath },
             .copy = !std.mem.endsWith(u8, entry.path, ".cgt"),
-        });
+        })) |old| {
+            state.files.allocator.free(old.key);
+            old.value.deinit(state.files.allocator);
+        }
     }
 
     return 0;
@@ -233,8 +249,6 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
 fn lAddFile(l: *c.lua_State) !c_int {
     const state = getState(l);
-    if (state.outpath == null)
-        return 0;
 
     const argc = c.lua_gettop(l);
 
@@ -249,17 +263,27 @@ fn lAddFile(l: *c.lua_State) !c_int {
         break :blk inpath;
     };
 
-    try state.files.append(.{
-        .outpath = try std.heap.c_allocator.dupe(u8, outpath),
-        .content = .{ .path = try std.heap.c_allocator.dupe(u8, inpath) },
+    const outpath_d = try state.files.allocator.dupe(u8, outpath);
+    errdefer state.files.allocator.free(outpath_d);
+
+    const inpath_d = try state.files.allocator.dupe(u8, inpath);
+    errdefer state.files.allocator.free(inpath_d);
+
+    if (try state.files.fetchPut(outpath_d, .{
+        .content = .{ .path = inpath_d },
         .copy = !std.mem.endsWith(u8, inpath, ".cgt"),
-    });
+    })) |old| {
+        state.files.allocator.free(old.key);
+        old.value.deinit(state.files.allocator);
+    }
 
     return 0;
 }
 
 fn lDoTemplate(l: *c.lua_State) !c_int {
     const source = ffi.luaCheckString(l, 1);
+
+    const state = getState(l);
 
     var source_name: []const u8 = "<dotemplate>";
 
@@ -287,8 +311,8 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     }
 
     var parser = Parser{ .str = source, .pos = 0 };
-    const tmpl_code = try luagen.generateLua(&parser, source_name);
-    defer tmpl_code.deinit();
+    const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, source_name);
+    defer tmpl_code.deinit(state.files.allocator);
 
     if (c.luaL_loadbuffer(
         l,
@@ -313,7 +337,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     c.lua_setfield(l, -2, "opt");
 
     // add tmpl
-    const tmpl = (try LTemplate.init(tmpl_code)).push(l);
+    const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
@@ -325,7 +349,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     }
 
     const output = try tmpl.getOutput(l);
-    defer std.heap.c_allocator.free(output);
+    defer state.files.allocator.free(output);
 
     c.lua_pushlstring(l, output.ptr, output.len);
     return 1;
@@ -348,13 +372,15 @@ pub fn lToJSON(l: *c.lua_State) !c_int {
     c.luaL_checkany(l, 1);
     const pretty = if (c.lua_gettop(l) >= 2) c.lua_toboolean(l, 2) != 0 else false;
 
+    const state = getState(l);
+
     // If you're doing more than 16KiB of JSON, open an issue
     // and bring a VERY good explanation with you :D
     var buf: [1024 * 16]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     var wstream = std.json.WriteStream(@TypeOf(fbs.writer()), .assumed_correct).init(
-        std.heap.c_allocator,
+        state.files.allocator,
         fbs.writer(),
         .{ .whitespace = if (pretty) .indent_2 else .minified },
     );
@@ -374,9 +400,9 @@ pub const LTemplate = struct {
     code: TemplateCode,
     output: std.ArrayList(u8),
 
-    pub fn init(code: TemplateCode) !LTemplate {
+    pub fn init(code: TemplateCode, alloc: std.mem.Allocator) !LTemplate {
         return .{
-            .output = std.ArrayList(u8).init(std.heap.c_allocator),
+            .output = std.ArrayList(u8).init(alloc),
             .code = code,
         };
     }
@@ -421,7 +447,7 @@ pub const LTemplate = struct {
 
         const out = ffi.luaToString(l, -1);
 
-        return try std.heap.c_allocator.dupe(u8, out);
+        return try self.output.allocator.dupe(u8, out);
     }
 
     fn lGC(l: *c.lua_State) !c_int {

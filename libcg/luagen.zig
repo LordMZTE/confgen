@@ -8,17 +8,17 @@ pub const TemplateCode = struct {
     content: []const u8,
     literals: []const []const u8,
 
-    pub fn deinit(self: TemplateCode) void {
-        std.heap.c_allocator.free(self.name);
-        std.heap.c_allocator.free(self.literals);
-        std.heap.c_allocator.free(self.content);
+    pub fn deinit(self: TemplateCode, alloc: std.mem.Allocator) void {
+        alloc.free(self.name);
+        alloc.free(self.literals);
+        alloc.free(self.content);
     }
 };
 
 /// Generates a lua script that allows getting the output from a given parser.
-pub fn generateLua(parser: *Parser, name: []const u8) !TemplateCode {
-    var outbuf = std.ArrayList(u8).init(std.heap.c_allocator);
-    var literals = std.ArrayList([]const u8).init(std.heap.c_allocator);
+pub fn generateLua(alloc: std.mem.Allocator, parser: *Parser, name: []const u8) !TemplateCode {
+    var outbuf = std.ArrayList(u8).init(alloc);
+    var literals = std.ArrayList([]const u8).init(alloc);
 
     while (try parser.next()) |token| {
         switch (token.token_type) {
@@ -43,7 +43,7 @@ pub fn generateLua(parser: *Parser, name: []const u8) !TemplateCode {
     }
 
     return .{
-        .name = try std.heap.c_allocator.dupeZ(u8, name),
+        .name = try alloc.dupeZ(u8, name),
         .content = try outbuf.toOwnedSlice(),
         .literals = try literals.toOwnedSlice(),
     };
