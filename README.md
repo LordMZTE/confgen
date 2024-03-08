@@ -96,6 +96,18 @@ echo 'cg.opt.compositor = "hyprland"' >~/confgenfs/_cgfs/eval
 
 And when waybar is started afterwards, it would work without manual configuration changes (assuming a symlink `~/confgenfs/.config/waybar -> ~/.config/waybar`).
 
+After starting river, we can see the final config:
+```bash
+$ cat ~/confgenfs/.config/waybar/config
+{
+    "modules-left": [
+
+        "river/tags", "river/window"
+
+    ]
+}
+```
+
 ## Building
 
 ### Linux
