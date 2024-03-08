@@ -53,8 +53,48 @@ would result in this output.
 Lastly, run confgen, providing the output directory as an argument:
 
 ```bash
-confgen out_dir
+confgen confgen.lua out_dir
 ```
+
+## ConfgenFS
+
+ConfgenFS provides an alternative to the `confgen` CLI tool. It takes a path to a confgen file
+as well as a mountpoint:
+```bash
+# Mount config at ~/confgenfs
+confgenfs /path/to/confgen.lua ~/confgenfs
+```
+
+This mounts a FUSE3 filesystem containing all the config files. The advantage of this is that
+the templates will be generated when the file is opened and not ahead of time.
+
+Additionally, the filesystem will contain "meta-files" inside `_cgfs/`, currently only `_cgfs/eval`.
+You can write some Lua code to this file, and it will be evaluated in the global Lua context.
+This allows for dynamic configurations, here's a practical example:
+
+`.config/waybar/config.cgt`:
+```json
+{
+    "modules-left": [
+        <! if opt.compositor == "river" then !>
+        "river/tags", "river/window"
+        <! elseif opt.compositor == "hyprland" then !>
+        "hyprland/workspaces", "hyprland/window"
+        <! end !>
+    ]
+}
+```
+
+Your hyprland and river configs could set the compositor option on startup:
+```bash
+# For river:
+echo 'cg.opt.compositor = "river"' >~/confgenfs/_cgfs/eval
+
+# For hyprland:
+echo 'cg.opt.compositor = "hyprland"' >~/confgenfs/_cgfs/eval
+```
+
+And when waybar is started afterwards, it would work without manual configuration changes (assuming a symlink `~/confgenfs/.config/waybar -> ~/.config/waybar`).
 
 ## Building
 
