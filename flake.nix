@@ -4,10 +4,15 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     utils.url = "github:numtide/flake-utils";
-    zig.url = "github:mitchellh/zig-overlay";
+    nixpkgs-zig-0-12.url = "github:vancluever/nixpkgs/vancluever-zig-0-12";
   };
 
-  outputs = { self, nixpkgs, utils, zig }: utils.lib.eachDefaultSystem (system:
+  outputs =
+    { self
+    , nixpkgs
+    , utils
+    , nixpkgs-zig-0-12
+    }: utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs { inherit system; };
       deps = pkgs.linkFarm "zig-packages" [
@@ -31,7 +36,13 @@
         dontFixup = true;
 
         nativeBuildInputs = with pkgs; [
+          nixpkgs-zig-0-12.legacyPackages.${system}.zig_0_12.hook
           pkg-config
+          luajit
+          fuse3
+        ];
+
+        buildInputs = with pkgs; [
           luajit
           fuse3
         ];
@@ -39,16 +50,18 @@
         postPatch = ''
           export ZIG_LOCAL_CACHE_DIR=$(pwd)/zig-cache
           export ZIG_GLOBAL_CACHE_DIR=$ZIG_LOCAL_CACHE_DIR
-          export NIX_CFLAGS_COMPILE=
-          export NIX_LDFLAGS=
           mkdir -p $ZIG_GLOBAL_CACHE_DIR
           ln -s ${deps} $ZIG_GLOBAL_CACHE_DIR/p
         '';
-        installPhase = ''
-          runHook preBuild
-          ${zig.packages.${system}.master}/bin/zig build install --prefix $out
-          runHook postBuild
-        '';
+
+        #installPhase = ''
+        #  runHook preBuild
+        #  echo $NIX_LDFLAGS
+        #  ${zig.packages.${system}.master}/bin/zig build install \
+        #    -Doptimize=ReleaseFast \
+        #    --prefix $out
+        #  runHook postBuild
+        #'';
       };
     });
 }
