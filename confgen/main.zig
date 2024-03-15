@@ -194,7 +194,7 @@ fn genfile(
     const state = libcg.luaapi.getState(l);
 
     if (file.copy) {
-        const from_path = try std.fs.path.join(
+        const from_path = try std.fs.path.resolve(
             std.heap.c_allocator,
             &.{ state.rootpath, file.content.path },
         );

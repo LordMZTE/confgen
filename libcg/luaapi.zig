@@ -208,10 +208,11 @@ fn lAddString(l: *c.lua_State) !c_int {
 
 fn lAddPath(l: *c.lua_State) !c_int {
     const path = ffi.luaCheckString(l, 1);
+    const targpath = if (c.lua_gettop(l) >= 2) ffi.luaCheckString(l, 2) else path;
 
     const state = getState(l);
 
-    const resolved_path = try std.fs.path.join(state.files.allocator, &.{ state.rootpath, path });
+    const resolved_path = try std.fs.path.resolve(state.files.allocator, &.{ state.rootpath, path });
     defer state.files.allocator.free(resolved_path);
 
     var dir = try std.fs.cwd().openDir(resolved_path, .{ .iterate = true });
@@ -229,10 +230,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
         else
             entry.path;
 
-        const outpath = try std.fs.path.join(state.files.allocator, &.{ path, outbase });
+        const outpath = try std.fs.path.join(state.files.allocator, &.{ targpath, outbase });
         errdefer state.files.allocator.free(outpath);
 
-        const inpath = try std.fs.path.join(state.files.allocator, &.{ path, entry.path });
+        const inpath = try std.fs.path.resolve(state.files.allocator, &.{ path, entry.path });
         errdefer state.files.allocator.free(inpath);
 
         if (try state.files.fetchPut(outpath, .{

@@ -419,13 +419,13 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
         // CgFile points to a file on disk, read it.
         .path => |rel_path| {
             self.genbuf.clearRetainingCapacity();
-            const path = try std.fs.path.joinZ(
+            const path = try std.fs.path.resolve(
                 self.alloc,
                 &.{ self.cg_state.rootpath, rel_path },
             );
             defer self.alloc.free(path);
 
-            var file = try std.fs.cwd().openFileZ(path, .{});
+            var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
 
             try file.reader().readAllArrayList(&self.genbuf, std.math.maxInt(usize));
