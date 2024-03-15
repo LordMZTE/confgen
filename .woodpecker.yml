@@ -9,6 +9,15 @@ steps:
       - zig build test
       - zig build -Doptimize=ReleaseFast
 
+  packages:
+    image: alpine
+    commands:
+      - apk add zip
+      - cd zig-out
+      - zip -r ../confgen-linux-x86_64.zip .
+    when:
+      event: tag
+
   publish:
     image: woodpeckerci/plugin-gitea-release
     settings:
@@ -16,6 +25,6 @@ steps:
       api_key:
         from_secret: forgejo_key
       title: tag-${CI_COMMIT_TAG}
-      files: zig-out/bin/confgen
+      files: confgen-linux-x86_64.zip
     when:
       event: tag
