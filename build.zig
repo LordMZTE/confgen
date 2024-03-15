@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     run_confgen_step.dependOn(&run_confgen_cmd.step);
 
     const exe_confgen_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "confgen/main.zig" },
         .link_libc = true,
         .target = target,
         .optimize = optimize,
