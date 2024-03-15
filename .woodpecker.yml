@@ -3,7 +3,7 @@ steps:
     image: git.mzte.de/lordmzte/zig-build
     commands:
       - apt update
-      - apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev
+      - apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3
 
       - zig fmt --check .
       - zig build test
