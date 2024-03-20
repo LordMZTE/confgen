@@ -218,7 +218,6 @@ fn genfile(
 
     var content: []const u8 = undefined;
     var fname: ?[]const u8 = null;
-    var file_mode: std.fs.File.Mode = std.fs.File.default_mode;
     switch (file.content) {
         .string => |s| content = s,
         .path => |p| {
@@ -226,7 +225,6 @@ fn genfile(
             const path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, p });
             defer std.heap.c_allocator.free(path);
 
-            file_mode = (try std.fs.cwd().statFile(path)).mode;
             const f = try std.fs.cwd().openFile(path, .{});
             defer f.close();
 
@@ -245,7 +243,7 @@ fn genfile(
     defer tmpl.deinit(std.heap.c_allocator);
 
     const out = try libcg.luaapi.generate(l, tmpl);
-    defer std.heap.c_allocator.free(out);
+    defer std.heap.c_allocator.free(out.content);
 
     const path = try std.fs.path.join(
         std.heap.c_allocator,
@@ -257,8 +255,8 @@ fn genfile(
         try std.fs.cwd().makePath(dir);
     }
 
-    var outfile = try std.fs.cwd().createFile(path, .{ .mode = file_mode });
+    var outfile = try std.fs.cwd().createFile(path, .{ .mode = out.mode });
     defer outfile.close();
 
-    try outfile.writeAll(out);
+    try outfile.writeAll(out.content);
 }

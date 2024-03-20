@@ -114,11 +114,11 @@ const fuse_op_impl = struct {
 
         switch (handle) {
             .cgfile => |content| {
-                if (offset >= content.len)
+                if (offset >= content.content.len)
                     return 0;
 
-                const cont_off = content[@intCast(offset)..];
-                const len = @min(buf.len, content.len);
+                const cont_off = content.content[@intCast(offset)..];
+                const len = @min(buf.len, content.content.len);
                 @memcpy(buf[0..len], cont_off[0..len]);
                 return @intCast(len);
             },
@@ -187,7 +187,6 @@ const fuse_op_impl = struct {
     ) callconv(.C) c_int {
         _ = fi;
         const dir_mode = std.os.S.IFDIR | 0o555;
-        const file_mode = std.os.S.IFREG | 0o444;
 
         const stat: *std.os.Stat = @ptrCast(stat_r.?);
         stat.* = std.mem.zeroInit(std.os.Stat, .{
@@ -211,10 +210,14 @@ const fuse_op_impl = struct {
             return 0;
         }
 
-        if (fs.cg_state.files.contains(path)) {
-            stat.mode = file_mode;
+        if (fs.cg_state.files.get(path)) |cgf| {
+            const meta = fs.getFileMeta(cgf, path) catch |e| {
+                std.log.err("getting file meta: {}", .{e});
+                return errnoRet(.IO);
+            };
+            stat.mode = std.os.S.IFREG | meta.mode;
+            stat.size = @intCast(meta.size);
             stat.nlink = 1;
-            //stat.size = 1024 * 1024;
         } else if (fs.directory_cache.contains(path)) {
             stat.mode = dir_mode;
             stat.nlink = 2;
@@ -281,24 +284,31 @@ inline fn errnoRet(e: std.os.E) c_int {
     return -@as(c_int, @intCast(@intFromEnum(e)));
 }
 
-const DirectoryCache = std.HashMap([:0]const u8, void, struct {
-    pub fn hash(_: @This(), s: [:0]const u8) u64 {
-        return std.hash.Wyhash.hash(0, s);
-    }
+fn Cache(comptime V: type) type {
+    return std.HashMap([:0]const u8, V, struct {
+        pub fn hash(_: @This(), s: [:0]const u8) u64 {
+            return std.hash.Wyhash.hash(0, s);
+        }
 
-    pub fn eql(_: @This(), a: [:0]const u8, b: [:0]const u8) bool {
-        return std.mem.eql(u8, a, b);
-    }
-}, std.hash_map.default_max_load_percentage);
+        pub fn eql(_: @This(), a: [:0]const u8, b: [:0]const u8) bool {
+            return std.mem.eql(u8, a, b);
+        }
+    }, std.hash_map.default_max_load_percentage);
+}
+
+const FileMeta = struct {
+    mode: u24,
+    size: u64,
+};
 
 const FileHandle = union(enum) {
-    cgfile: []const u8,
+    cgfile: libcg.luaapi.GeneratedFile,
     special_eval: std.ArrayListUnmanaged(u8),
 
     pub fn deinit(self_const: FileHandle, alloc: std.mem.Allocator) void {
         var self = self_const;
         switch (self) {
-            .cgfile => |data| alloc.free(data),
+            .cgfile => |data| alloc.free(data.content),
             .special_eval => |*data| data.deinit(alloc),
         }
     }
@@ -312,12 +322,18 @@ l: *libcg.c.lua_State,
 genbuf: std.ArrayList(u8),
 
 /// A set containing all directories.
-directory_cache: DirectoryCache,
+directory_cache: Cache(void),
+
+/// A cache containing metadata for a file at a given path.
+/// Since the mode of templates required them to be generated, and that of copy files requiring a
+/// stat call, not caching this would be stupid.
+/// A downside of supporting modes at all is that we'll have to evaluate every template on a getattr
+/// once and then cache it, but I don't think this is avoidable.
+meta_cache: Cache(FileMeta),
 
 /// An array storing all possible open file handles. When a new file is opened,
 /// the first unused is used.
 handles: [512]?FileHandle,
-
 fn init(init_data: InitData) !FileSystem {
     const cg_state = try init_data.alloc.create(libcg.luaapi.CgState);
     errdefer init_data.alloc.destroy(cg_state);
@@ -336,7 +352,8 @@ fn init(init_data: InitData) !FileSystem {
         .cg_state = cg_state,
         .l = l,
         .genbuf = std.ArrayList(u8).init(init_data.alloc),
-        .directory_cache = DirectoryCache.init(init_data.alloc),
+        .directory_cache = Cache(void).init(init_data.alloc),
+        .meta_cache = Cache(FileMeta).init(init_data.alloc),
         .handles = [1]?FileHandle{null} ** 512,
     };
     errdefer self.deinit();
@@ -401,6 +418,12 @@ fn deinit(self: *FileSystem) void {
     }
     self.directory_cache.deinit();
 
+    var metacache_iter = self.meta_cache.keyIterator();
+    while (metacache_iter.next()) |key| {
+        self.alloc.free(key.*);
+    }
+    self.meta_cache.deinit();
+
     for (self.handles) |maybe_handle| {
         if (maybe_handle) |handle| {
             handle.deinit(self.alloc);
@@ -410,8 +433,54 @@ fn deinit(self: *FileSystem) void {
     self.alloc.destroy(self);
 }
 
-fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8) ![]const u8 {
+fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) !FileMeta {
+    if (self.meta_cache.get(path)) |meta| {
+        return meta;
+    } else {
+        std.log.debug("new in meta cache: {s}", .{path});
+
+        var mode: u24 = 0o444;
+        var size: u64 = 0;
+        if (cgf.copy) {
+            switch (cgf.content) {
+                .string => |s| size = s.len,
+                .path => |rel_path| {
+                    const actual_path = try std.fs.path.resolve(self.alloc, &.{ self.cg_state.rootpath, rel_path });
+                    defer self.alloc.free(actual_path);
+
+                    const stat = try std.fs.cwd().statFile(actual_path);
+                    mode = @truncate(stat.mode);
+                    size = stat.size;
+                },
+            }
+        } else {
+            const gen = try self.generateCGFile(cgf, path);
+            defer self.alloc.free(gen.content);
+            mode = gen.mode;
+            // we technically know the size here, but given it's non-deterministic nature, we'll
+            // report 0 in order to prevent applications from naively reading too little data when
+            // the file is larger the next time it's generated.
+        }
+
+        // Unset the write bits, confgenfs is always read-only.
+        mode &= 0o555;
+
+        const meta = FileMeta{
+            .mode = mode,
+            .size = size,
+        };
+
+        const path_d = try self.alloc.dupeZ(u8, path);
+        errdefer self.alloc.free(path_d);
+        try self.meta_cache.putNoClobber(path_d, meta);
+
+        return meta;
+    }
+}
+
+fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8) !libcg.luaapi.GeneratedFile {
     var content: []const u8 = undefined;
+    var copy_mode: u24 = 0o644;
     switch (cgf.content) {
         // CGFile contains content, no work needed.
         .string => |con| content = con,
@@ -428,6 +497,8 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
             var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
 
+            copy_mode = @truncate((try file.stat()).mode);
+
             try file.reader().readAllArrayList(&self.genbuf, std.math.maxInt(usize));
             content = self.genbuf.items;
         },
@@ -435,7 +506,10 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
 
     if (cgf.copy) {
         std.log.info("copying {s}", .{name});
-        return try self.alloc.dupe(u8, content);
+        return .{
+            .content = try self.alloc.dupe(u8, content),
+            .mode = copy_mode,
+        };
     }
 
     std.log.info("generating {s}", .{name});

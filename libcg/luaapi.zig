@@ -42,6 +42,12 @@ pub const CgFileContent = union(enum) {
     string: []const u8,
 };
 
+pub const GeneratedFile = struct {
+    /// Typically allocated.
+    content: []const u8,
+    mode: u24,
+};
+
 pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     const l = c.luaL_newstate().?;
 
@@ -125,7 +131,7 @@ pub fn getState(l: *c.lua_State) *CgState {
     return @ptrCast(@alignCast(state_ptr));
 }
 
-pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
+pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const state = getState(l);
 
     const prevtop = c.lua_gettop(l);
@@ -164,7 +170,10 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) ![]const u8 {
         return error.RunTemplate;
     }
 
-    return try tmpl.getOutput(l);
+    return .{
+        .content = try tmpl.getOutput(l),
+        .mode = tmpl.mode,
+    };
 }
 
 pub fn callOnDoneCallbacks(l: *c.lua_State, errors: bool) void {
@@ -399,6 +408,7 @@ pub const LTemplate = struct {
     pub const registry_key = "confgen_template";
 
     code: TemplateCode,
+    mode: u24 = 0o644,
     output: std.ArrayList(u8),
 
     pub fn init(code: TemplateCode, alloc: std.mem.Allocator) !LTemplate {
@@ -499,6 +509,31 @@ pub const LTemplate = struct {
         return 0;
     }
 
+    fn lSetMode(l: *c.lua_State) !c_int {
+        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+        c.luaL_checkany(l, 2);
+
+        const mode = mode: {
+            if (c.lua_isstring(l, 2) != 0) {
+                const s = ffi.luaToString(l, 2);
+                if (s.len != 3) break :mode null;
+                break :mode std.fmt.parseInt(u24, s, 8) catch null;
+            } else if (c.lua_isnumber(l, 2) != 0) {
+                const n = c.lua_tonumber(l, 2);
+                if (@floor(n) == n) {
+                    break :mode @as(u24, @intFromFloat(n));
+                }
+            }
+            break :mode null;
+        } orelse {
+            return c.luaL_argerror(l, 2, "must be either number or string interpretable as 3 octal digits!");
+        };
+
+        self.mode = mode;
+
+        return 0;
+    }
+
     fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, registry_key);
 
@@ -513,6 +548,9 @@ pub const LTemplate = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lSetPostProcessor));
         c.lua_setfield(l, -2, "setPostProcessor");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lSetMode));
+        c.lua_setfield(l, -2, "setMode");
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");
