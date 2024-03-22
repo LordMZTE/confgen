@@ -1,0 +1,71 @@
+.TH CONFGEN 1 "2024\-03\-22"
+.SH NAME
+.B confgen
+\- Configuration file template engine
+
+.SH SYNOPSIS
+.B confgen
+.RI [ CONFGENFILE ]
+.RI [ OUTPATH ]
+.br
+.B confgen --compile
+.RI [ TEMPLATE_FILE ]
+.br
+.B confgen --json-opt
+.RI [ CONFGENFILE ]
+.br
+.B confgen --help
+
+.SH DESCRIPTION
+.B Confgen
+is a template engine based around the Lua language primarily intended for generating
+.I configuration
+.IR files .
+
+Each configuration file is declared as a
+.I template file
+which is first compiled into Lua code and then evaluated to collect its output.
+This may be used to, for example, insert shared values such as fonts into a (configuration) file.
+
+When neither
+.B --compile
+nor
+.B --json-opt
+are provided, confgen will take the given
+.IR confgenfile ,
+typically named
+.IR confgen.lua ,
+collect the files to process as well as options and any possible callbacks from it, and generate all
+file into the given
+.IR outpath .
+
+.SH OPTIONS
+.TP
+.B --help
+Show a help message.
+
+.TP
+.B --compile
+Do not generate any files, instead, compile the template file at the given path
+into it's internal lua representation and print it to
+.IR STDOUT .
+This is useful for debugging templates that might be causing errors.
+
+.TP
+.B --json-opt
+Do not generate any files, instead, collect options and output them to
+.I STDOUT
+in
+.I JSON
+format.
+
+For the specifics of this, see the documentation for the
+.I cg.toJSON
+function in
+.BR confgen (3).
+
+.SH SEE ALSO
+.BR confgen (3),
+.BR confgen.lua (5),
+.BR confgen-template (5),
+.BR confgenfs (1)

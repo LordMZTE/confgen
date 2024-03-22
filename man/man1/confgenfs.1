@@ -1,0 +1,77 @@
+.TH CONFGENFS 1 "2024\-03\-22"
+.SH NAME
+.B confgenfs
+\- FUSE3 filesystem for the
+.I confgen
+template engine.
+
+.SH SYNOPSIS
+.B confgenfs
+.RI [ CONFGENFILE ]
+.RI [ MOUNTPOINT ]
+.br
+.B confgenfs --help
+
+.SH DESCRIPTION
+.B ConfgenFS
+behaves somewhat similarly to
+.I Confgen
+in the sense that it also evaluates a given
+.IR confgenfile ,
+however, it will not generate the files immediately but instead mount a
+.I read-only
+version of them at the specified
+.I mountpoint
+as a FUSE3 filesystem.
+The resulting filesystem will generate configuration files once they're
+.IR opened ,
+intentionally without caching. The advantage of this is that configuration file templates may be
+.IR non-deterministic ,
+making it possible to have them adjust to the current state of the system.
+
+The filesystem will only report file sizes for
+.I non-template
+files, as templated files do not necessarily have a deterministic size. A drawback that results of
+this is that a few applications will naively assume that this means the file is empty and not attempt
+to read it, however this has only been observed in rare cases.
+
+Additionally, confgenfs allows interfacing with the running filesystem via
+.I special files
+located at
+.B _cgfs
+inside the filesystem.
+
+.SS SPECIAL FILES
+.TP
+.B _cgfs/eval
+This file is writable. When data is written to this file,
+.B ConfgenFS
+will cache it until the file is closed. It will then attempt to evaluate all written data as
+.I Lua code
+in the same context as the templates. This allows changing options at runtime, for example.
+
+.SH OPTIONS
+.TP
+.B --help
+Show a help message.
+
+.SH EXAMPLES
+Change an option representing the currently in-use wayland compositor at runtime by executing
+the following shellcode in a startup script. The code assumes
+.B ConfgenFS
+is mounted at
+.IR ~/confgenfs .
+
+.RS 4
+echo 'cg.opt.wayland_compositor = "sway"' > ~/confgenfs/_cgfs/eval
+.RE
+
+A hypothetical template for, for example, a bar's configuration could then operate on
+.IR opt.wayland_compositor .
+
+.SH SEE ALSO
+.BR confgen (1),
+.BR confgen (3),
+.BR fuse (4),
+.BR confgen.lua (5),
+.BR confgen-template (5)

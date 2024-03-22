@@ -38,6 +38,19 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(confgen_exe);
 
+    inline for (.{
+        "man/man1/confgen.1",
+        "man/man3/confgen.3",
+        "man/man5/confgen-template.5",
+        "man/man5/confgen.lua.5",
+    }) |f| {
+        b.installFile(f, f);
+    }
+
+    if (confgenfs) {
+        b.installFile("man/man1/confgenfs.1", "man/man1/confgenfs.1");
+    }
+
     const run_confgen_cmd = b.addRunArtifact(confgen_exe);
     run_confgen_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

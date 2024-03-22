@@ -1,0 +1,49 @@
+.TH CONFGEN.LUA 5 "2024\-03\-22"
+.SH NAME
+.B confgen.lua
+\- The
+.IR confgenfile .
+
+.SH DESCRIPTION
+The
+.IR confgenfile ,
+often referred to by its conventional name,
+.I confgen.lua
+is the file that declares a confgen project. It's simply a file containing Lua code that is located
+at the project root. It typically calls the
+.I cg.add*
+functions and sets values in
+.IR cg.opt .
+
+.SH EXAMPLE
+This is a typical minimal
+.IR confgenfile .
+It first adds files in the local project directory to the file list and then sets options to be used
+in those files:
+
+.RS 4
+cg.addPath(\(dq.config\(dq) -- add the '.config' directory in the project folder
+.br
+cg.addFile(\(dq.bashrc\(dq) -- add a single file
+
+cg.opt.font = \(dqMyFont\(dq
+.br
+cg.opt.color_palette = [ \(dqff0000\(dq, \(dq00ff00\(dq ]
+.RE
+
+This file will cause
+.I Confgen
+to generate all files in
+.I .config
+as well as
+.IR .bashrc ,
+providing the
+.IR font \ and \ color_palette
+options to any templates.
+
+.SH SEE ALSO
+.BR confgen (1),
+.BR confgen (3),
+.BR confgen-template (5),
+.BR confgenfs (1)
+

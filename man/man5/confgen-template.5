@@ -1,0 +1,124 @@
+.TH CONFGEN-TEMPLATE 5 "2024\-03\-22"
+.SH NAME
+.B Confgen Template
+\- The
+.I .cgt
+file format.
+
+.SH DESCRIPTION
+The
+.I .cgt
+file format is a format for configuration file templates that is processed by
+.I Confgen
+to generate configuration files. It has a very simple syntax.
+
+.B Confgen Templates
+may contain any arbitrary data. A template is only invalid if it either compiles to invalid Lua
+code, or contains unclosed delimiters.
+
+.SS SYNTAX
+The confgen format consists of only 2 syntactic elements that may be present on top of the
+underlying configuration format:
+
+.TP
+.B <% lua-expression %>
+This inserts the value of the inner
+.I Lua expression
+in place of the token. One can think of this as being syntactic sugar for
+.I <! tmpl:pushValue(lua-expression)
+.IR !> .
+This is explained later.
+The spacing around the inner code is not neccesary, but strongly encouraged.
+
+.TP
+.B <! lua-code !>
+This inserts arbitrary
+.I Lua code
+in the compiled template. This is how control flow is created inside
+.B confgen
+.BR templates .
+The spacing around the inner code is not neccesary, but strongly encouraged.
+.ES
+
+.SS CONCEPT
+.B Confgen Templates
+are compiled to
+.I Lua code
+by confgen. One must keep this in mind when writing them!
+
+The compiled
+.I Lua code
+is then run to generate the final output.
+The output is created by appending to an output buffer. This buffer is stored in the
+.I tmpl
+object and may be appended to using various functions described in
+.IR confgen (3).
+
+This compiled
+.I Lua code
+is created in a simple fashion:
+
+.IP \(bu
+If unenclosed data is encountered, save that data internally and append
+.I tmpl:pushLitIdx(N)
+to the template code, where
+.I N
+is an index to the interned data.
+
+.IP \(bu
+If a
+.I lua-expression
+block is encountered, append 
+.I tmpl:pushValue(VALUE)
+to the template code, where
+.I VALUE
+is the exact code inside the block.
+
+.IP \(bu
+If a
+.I lua-code
+block is encountered, append its inner code to the template code
+.IR as-is .
+
+.P
+A template will have full access to all Lua globals as well as the full Lua library.
+Additionally, the value of
+.I cg.opt
+will be available in global scope simply as
+.I opt
+for brevity.
+
+This API is described in
+.BR confgen (3).
+A template is free to call into any of the mentioned functions manually, this is not discouraged.
+
+.SH EXAMPLES
+This is a template for a hypothetical terminal emulator configuration file, demonstrating all the
+capabilities of the format.
+
+.RS 4
+<! -- This is how a comment is conventionally written
+   -- It's simple Lua code! !>
+.br
+font = <% opt.font %>
+
+<! if opt.font_size then !>
+.br
+font-size = <% opt.font_size %>
+.br
+<! end !>
+
+<! for i, col in ipairs(opt.color_palette) do !>
+.br
+color<% i %> = <% col %>
+.br
+<! end !>
+.RE
+One may examine the generated code using
+.IR confgen\ --compile .
+
+.SH SEE ALSO
+.BR confgen (1),
+.BR confgen (3),
+.BR confgen.lua (5),
+.BR confgenfs (1)
