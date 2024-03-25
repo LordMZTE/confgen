@@ -50,6 +50,14 @@ will cache it until the file is closed. It will then attempt to evaluate all wri
 .I Lua code
 in the same context as the templates. This allows changing options at runtime, for example.
 
+.TP
+.B _cgfs/opts.json
+This file will contain a read-only version of
+.I cg.opt
+in JSON format, similar to
+.IR confgen 's \ --json-opt
+parameter.
+
 .SH OPTIONS
 .TP
 .B --help

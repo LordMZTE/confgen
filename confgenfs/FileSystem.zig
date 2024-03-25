@@ -77,6 +77,13 @@ const fuse_op_impl = struct {
         fs.handles[handle_idx] = if (std.mem.eql(u8, path, "_cgfs/eval")) blk: {
             if (fi.flags.ACCMODE != .WRONLY) return errnoRet(.ACCES);
             break :blk .{ .special_eval = .{} };
+        } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) blk: {
+            if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
+
+            break :blk .{ .cgfile = .{ .content = fs.generateOptsJSON() catch |e| {
+                std.log.err("generating opts.json: {}", .{e});
+                return errnoRet(.PERM);
+            }, .mode = 0o444 } };
         } else blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
@@ -87,10 +94,10 @@ const fuse_op_impl = struct {
                 return errnoRet(.PERM);
             };
 
-            std.log.debug("new handle idx: {}", .{handle_idx});
-
             break :blk .{ .cgfile = content };
         };
+
+        std.log.debug("new handle idx: {}", .{handle_idx});
 
         fi.fh = handle_idx;
 
@@ -208,6 +215,10 @@ const fuse_op_impl = struct {
             stat.mode = std.posix.S.IFREG | 0o644;
             stat.nlink = 1;
             return 0;
+        } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) {
+            stat.mode = std.posix.S.IFREG | 0o444;
+            stat.nlink = 1;
+            return 0;
         }
 
         if (fs.cg_state.files.get(path)) |cgf| {
@@ -249,6 +260,7 @@ const fuse_op_impl = struct {
 
         if (std.mem.eql(u8, path, "_cgfs")) {
             _ = filler.?(buf, "eval", null, 0, 0);
+            _ = filler.?(buf, "opts.json", null, 0, 0);
             return 0;
         }
 
@@ -522,6 +534,25 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
     defer tmpl.deinit(self.alloc);
 
     return try libcg.luaapi.generate(self.l, tmpl);
+}
+
+fn generateOptsJSON(self: *FileSystem) ![]const u8 {
+    var buf = std.ArrayList(u8).init(self.alloc);
+    errdefer buf.deinit();
+
+    var wstream = std.json.WriteStream(@TypeOf(buf.writer()), .assumed_correct)
+        .init(std.heap.c_allocator, buf.writer(), .{ .whitespace = .indent_2 });
+    defer wstream.deinit();
+
+    const lua_top = libcg.c.lua_gettop(self.l);
+    defer libcg.c.lua_settop(self.l, lua_top);
+
+    libcg.c.lua_getglobal(self.l, "cg");
+    libcg.c.lua_getfield(self.l, -1, "opt");
+
+    try libcg.json.luaToJSON(self.l, &wstream);
+
+    return try buf.toOwnedSlice();
 }
 
 fn eval(self: *FileSystem, code: []const u8) !void {
