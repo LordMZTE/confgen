@@ -186,10 +186,10 @@ const fuse_op_impl = struct {
         fi: ?*c.fuse_file_info,
     ) callconv(.C) c_int {
         _ = fi;
-        const dir_mode = std.os.S.IFDIR | 0o555;
+        const dir_mode = std.posix.S.IFDIR | 0o555;
 
-        const stat: *std.os.Stat = @ptrCast(stat_r.?);
-        stat.* = std.mem.zeroInit(std.os.Stat, .{
+        const stat: *std.posix.Stat = @ptrCast(stat_r.?);
+        stat.* = std.mem.zeroInit(std.posix.Stat, .{
             .uid = std.os.linux.getuid(),
             .gid = std.os.linux.getgid(),
         });
@@ -205,7 +205,7 @@ const fuse_op_impl = struct {
         }
 
         if (std.mem.eql(u8, path, "_cgfs/eval")) {
-            stat.mode = std.os.S.IFREG | 0o644;
+            stat.mode = std.posix.S.IFREG | 0o644;
             stat.nlink = 1;
             return 0;
         }
@@ -215,7 +215,7 @@ const fuse_op_impl = struct {
                 std.log.err("getting file meta: {}", .{e});
                 return errnoRet(.IO);
             };
-            stat.mode = std.os.S.IFREG | meta.mode;
+            stat.mode = std.posix.S.IFREG | meta.mode;
             stat.size = @intCast(meta.size);
             stat.nlink = 1;
         } else if (fs.directory_cache.contains(path)) {
@@ -255,7 +255,7 @@ const fuse_op_impl = struct {
         inline for (.{ fs.directory_cache, fs.cg_state.files }) |map| {
             var iter = map.keyIterator();
             while (iter.next()) |k| {
-                var k_z_buf: [std.os.PATH_MAX]u8 = undefined;
+                var k_z_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                 const k_z = std.fmt.bufPrintZ(&k_z_buf, "{s}", .{k.*}) catch
                     return errnoRet(.NOMEM);
 
@@ -280,7 +280,7 @@ fn trimPath(p: [*:0]const u8) [:0]const u8 {
     return if (path.len != 0 and path[0] == '/') path[1..] else path;
 }
 
-inline fn errnoRet(e: std.os.E) c_int {
+inline fn errnoRet(e: std.posix.E) c_int {
     return -@as(c_int, @intCast(@intFromEnum(e)));
 }
 
@@ -384,7 +384,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
         var dir = file.*;
         while (std.fs.path.dirname(dir)) |dirname| {
             dir = dirname;
-            var buf: [std.os.PATH_MAX]u8 = undefined;
+            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             @memcpy(buf[0..dirname.len], dirname);
             // I don't like this line.
             // Deal with it once it's a problem.

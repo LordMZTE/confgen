@@ -108,7 +108,7 @@ pub fn run() !void {
     }
 
     if (ret < 0) {
-        const errno = std.os.linux.getErrno(@intCast(-ret));
+        const errno: std.posix.E = @enumFromInt(-ret);
         std.log.err("error from FUSE main loop: {s}", .{@tagName(errno)});
         return error.Explained;
     } else if (ret > 0) {

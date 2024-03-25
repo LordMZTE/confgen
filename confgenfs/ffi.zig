@@ -7,7 +7,7 @@ pub const c = @cImport({
 });
 
 pub const fuse_file_info = extern struct {
-    flags: std.os.O,
+    flags: std.posix.O,
     bitfield: packed struct {
         writepage: u1,
         direct_io: u1,

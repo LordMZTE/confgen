@@ -17,7 +17,7 @@ pub fn logFn(
     args: anytype,
 ) void {
     if (stderr_isatty == null) {
-        stderr_isatty = std.os.isatty(std.os.STDERR_FILENO);
+        stderr_isatty = std.posix.isatty(std.posix.STDERR_FILENO);
     }
 
     const scope_prefix = if (scope == .default)
