@@ -54,8 +54,13 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     // open all lua libs
     c.luaL_openlibs(l);
 
-    // Add root path to package.path
     c.lua_getglobal(l, "_G");
+
+    // Override `print`
+    c.lua_pushcfunction(l, ffi.luaFunc(lPrint));
+    c.lua_setfield(l, -2, "print");
+
+    // Add root path to package.path
     c.lua_getfield(l, -1, "package");
 
     const root_luapath_prefix = try std.fmt.allocPrintZ(
@@ -192,6 +197,25 @@ pub fn callOnDoneCallbacks(l: *c.lua_State, errors: bool) void {
     }
 
     c.lua_pop(l, 1);
+}
+
+fn lPrint(l: *c.lua_State) !c_int {
+    const nargs = c.lua_gettop(l);
+
+    var buf_writer = std.io.bufferedWriter(std.io.getStdErr().writer());
+    var writer = buf_writer.writer();
+    try writer.writeAll("\x1b[1;34mL:\x1b[0m ");
+
+    for (0..@intCast(nargs)) |i| {
+        const s = ffi.luaToString(l, @intCast(i + 1));
+        try writer.writeAll(s);
+        if (i + 1 != nargs)
+            try writer.writeByte('\t');
+    }
+
+    try writer.writeByte('\n');
+    try buf_writer.flush();
+    return 0;
 }
 
 fn lAddString(l: *c.lua_State) !c_int {
