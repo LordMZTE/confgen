@@ -59,9 +59,11 @@ This compiled
 is created in a simple fashion:
 
 .IP \(bu
-If unenclosed data is encountered, save that data internally and append
-.I tmpl:pushLitIdx(N)
-to the template code, where
+If unenclosed data is encountered, save that data internally in the
+.I tmplcode object
+and append
+.I tmpl:pushLitIdx(tmplcode, N)
+to the compiled template Lua code, where
 .I N
 is an index to the interned data.
 

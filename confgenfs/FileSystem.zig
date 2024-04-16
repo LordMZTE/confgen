@@ -525,14 +525,8 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
     }
 
     std.log.info("generating {s}", .{name});
-    var parser = libcg.Parser{
-        .str = content,
-        .pos = 0,
-    };
-
-    const tmpl = try libcg.luagen.generateLua(self.alloc, &parser, name);
-    errdefer tmpl.deinit(self.alloc);
-
+    const src_alloc = try self.alloc.dupe(u8, content);
+    const tmpl = try libcg.luagen.generateLua(self.alloc, src_alloc, name);
     return try libcg.luaapi.generate(self.l, tmpl);
 }
 
@@ -541,7 +535,7 @@ fn generateOptsJSON(self: *FileSystem) ![]const u8 {
     errdefer buf.deinit();
 
     var wstream = std.json.WriteStream(@TypeOf(buf.writer()), .assumed_correct)
-        .init(std.heap.c_allocator, buf.writer(), .{ .whitespace = .indent_2 });
+        .init(self.alloc, buf.writer(), .{ .whitespace = .indent_2 });
     defer wstream.deinit();
 
     const lua_top = libcg.c.lua_gettop(self.l);

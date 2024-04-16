@@ -81,15 +81,8 @@ pub fn run() !void {
         defer file.close();
 
         const content = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
-        defer std.heap.c_allocator.free(content);
-
-        var parser = libcg.Parser{
-            .str = content,
-            .pos = 0,
-        };
-
-        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, &parser, filepath);
-        defer tmpl.deinit(std.heap.c_allocator);
+        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, content, filepath);
+        defer tmpl.deinit();
 
         try std.io.getStdOut().writeAll(tmpl.content);
 
@@ -245,15 +238,9 @@ fn genfile(
         },
     }
 
-    var parser = libcg.Parser{
-        .str = content,
-        .pos = 0,
-    };
-
     const out = gen: {
-        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, &parser, fname orelse file_outpath);
-        errdefer tmpl.deinit(std.heap.c_allocator);
-
+        const content_alloc = try std.heap.c_allocator.dupe(u8, content);
+        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, content_alloc, fname orelse file_outpath);
         break :gen try libcg.luaapi.generate(l, tmpl);
     };
     defer std.heap.c_allocator.free(out.content);

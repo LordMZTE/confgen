@@ -3,7 +3,6 @@ const ffi = @import("ffi.zig");
 const c = ffi.c;
 const luagen = @import("luagen.zig");
 
-const Parser = @import("Parser.zig");
 const TemplateCode = luagen.TemplateCode;
 
 pub const state_key = "cg_state";
@@ -116,6 +115,7 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_setfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
 
     LTemplate.initMetatable(l);
+    TemplateCode.initMetatable(l);
 
     return l;
 }
@@ -146,10 +146,10 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const prevtop = c.lua_gettop(l);
     defer c.lua_settop(l, prevtop);
 
-    const tmpl = mkenv: {
-        // We own code until the template has been pushed onto the lua stack and must free it
+    {
+        // We own code until it has been pushed onto the lua stack and must free it
         // in case of an error until then.
-        errdefer code.deinit(state.files.allocator);
+        errdefer code.deinit();
 
         if (c.luaL_loadbuffer(l, code.content.ptr, code.content.len, code.name) != 0) {
             std.log.err("failed to load template: {s}", .{ffi.luaToString(l, -1)});
@@ -167,14 +167,16 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
         c.lua_setfield(l, -3, "opt");
         c.lua_pop(l, 1);
 
-        // initialize template
-        const tmpl = (try LTemplate.init(code, state.files.allocator)).push(l);
-        c.lua_setfield(l, -2, "tmpl");
+        // add tmplcode
+        _ = code.push(l);
+        c.lua_setfield(l, -2, "tmplcode");
+    }
 
-        _ = c.lua_setfenv(l, -2);
+    // initialize template
+    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    c.lua_setfield(l, -2, "tmpl");
 
-        break :mkenv tmpl;
-    };
+    _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
@@ -353,10 +355,12 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
         source_name = ffi.luaToString(l, -1);
     }
 
-    const tmpl = mkenv: {
-        var parser = Parser{ .str = source, .pos = 0 };
-        const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, source_name);
-        errdefer tmpl_code.deinit(state.files.allocator);
+    {
+        const src_alloc = try state.files.allocator.dupe(u8, source);
+        const tmpl_code = try luagen.generateLua(state.files.allocator, src_alloc, source_name);
+
+        // At the end of the block, we push tmpl_code onto the lua stack.
+        errdefer tmpl_code.deinit();
 
         if (c.luaL_loadbuffer(
             l,
@@ -377,11 +381,14 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
         c.lua_pushvalue(l, -4);
         c.lua_setfield(l, -2, "opt");
 
-        // add tmpl
-        const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
-        c.lua_setfield(l, -2, "tmpl");
-        break :mkenv tmpl;
-    };
+        // add tmplcode
+        _ = tmpl_code.push(l);
+        c.lua_setfield(l, -2, "tmplcode");
+    }
+
+    // add tmpl
+    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
 
@@ -420,15 +427,10 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
         c.lua_remove(l, -2);
     }
 
-    // FIXME: This is a potential use-after-free! We should store the source string in a lua src
-    // object in the future.
-    const file_content = try std.fs.cwd().readFileAlloc(state.files.allocator, inpath, std.math.maxInt(usize));
-    defer state.files.allocator.free(file_content);
-
-    const tmpl = mkenv: {
-        var parser = Parser{ .str = file_content, .pos = 0 };
-        const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, inpath);
-        errdefer tmpl_code.deinit(state.files.allocator);
+    {
+        const file_content = try std.fs.cwd().readFileAlloc(state.files.allocator, inpath, std.math.maxInt(usize));
+        const tmpl_code = try luagen.generateLua(state.files.allocator, file_content, inpath);
+        errdefer tmpl_code.deinit();
 
         if (c.luaL_loadbuffer(
             l,
@@ -449,10 +451,13 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
         c.lua_pushvalue(l, -3);
         c.lua_setfield(l, -2, "opt");
 
-        const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
-        c.lua_setfield(l, -2, "tmpl");
-        break :mkenv tmpl;
-    };
+        // add tmplcode
+        _ = tmpl_code.push(l);
+        c.lua_setfield(l, -2, "tmplcode");
+    }
+
+    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
 
@@ -509,14 +514,13 @@ pub fn lToJSON(l: *c.lua_State) !c_int {
 }
 
 pub const LTemplate = struct {
-    pub const registry_key = "confgen_template";
+    pub const lua_registry_key = "confgen_template";
 
-    code: TemplateCode,
     mode: u24 = 0o644,
     output: std.ArrayList(u8),
 
     /// Inserts standard values into an fenv table on top of the stack to be used for the
-    /// template environment. `tmpl` and `opt` must be manually added.
+    /// template environment. `tmpl`, `tmplcode` and `opt` must be manually added.
     pub fn createTmplEnv(l: *c.lua_State) void {
         // environment metatable to delegate to global env
         c.lua_createtable(l, 0, 1);
@@ -525,21 +529,18 @@ pub const LTemplate = struct {
         _ = c.lua_setmetatable(l, -2);
     }
 
-    /// Code is owned by the LTemplate object, must be allocated with alloc.
-    pub fn init(code: TemplateCode, alloc: std.mem.Allocator) !LTemplate {
+    pub fn init(alloc: std.mem.Allocator) !LTemplate {
         return .{
             .output = std.ArrayList(u8).init(alloc),
-            .code = code,
         };
     }
 
     pub fn deinit(self: *LTemplate) void {
         self.output.deinit();
-        self.code.deinit(self.output.allocator);
     }
 
     pub fn push(self: LTemplate, l: *c.lua_State) *LTemplate {
-        const self_ptr = ffi.luaPushUdata(l, LTemplate, registry_key);
+        const self_ptr = ffi.luaPushUdata(l, LTemplate);
         self_ptr.* = self;
 
         // Create the companion table. It is used for storing user-provided stuff.
@@ -582,7 +583,7 @@ pub const LTemplate = struct {
     }
 
     fn lGC(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
 
         // set this template's companion table in the registry to nil
         c.lua_pushlightuserdata(l, self);
@@ -595,19 +596,20 @@ pub const LTemplate = struct {
     }
 
     fn lPushLitIdx(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
-        const idx = std.math.cast(usize, c.luaL_checkint(l, 2)) orelse return error.InvalidIndex;
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
+        const code = ffi.luaGetUdata(TemplateCode, l, 2);
+        const idx = std.math.cast(usize, c.luaL_checkint(l, 3)) orelse return error.InvalidIndex;
 
-        if (idx >= self.code.literals.len)
+        if (idx >= code.literals.len)
             return error.InvalidIndex;
 
-        try self.output.appendSlice(self.code.literals[idx]);
+        try self.output.appendSlice(code.literals[idx]);
 
         return 0;
     }
 
     fn lPushValue(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
         try self.output.appendSlice(ffi.luaCheckString(l, 2));
 
         return 0;
@@ -616,7 +618,7 @@ pub const LTemplate = struct {
     fn lSetPostProcessor(l: *c.lua_State) !c_int {
         c.luaL_checktype(l, 2, c.LUA_TFUNCTION);
 
-        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
 
         // get companion table
         c.lua_pushlightuserdata(l, self);
@@ -630,7 +632,7 @@ pub const LTemplate = struct {
     }
 
     fn lSetMode(l: *c.lua_State) !c_int {
-        const self = ffi.luaGetUdata(LTemplate, l, 1, registry_key);
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
         c.luaL_checkany(l, 2);
 
         const mode = mode: {
@@ -655,7 +657,7 @@ pub const LTemplate = struct {
     }
 
     fn initMetatable(l: *c.lua_State) void {
-        _ = c.luaL_newmetatable(l, registry_key);
+        _ = c.luaL_newmetatable(l, lua_registry_key);
 
         c.lua_pushcfunction(l, ffi.luaFunc(lGC));
         c.lua_setfield(l, -2, "__gc");

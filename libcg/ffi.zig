@@ -26,19 +26,19 @@ pub fn luaFunc(comptime func: anytype) c.lua_CFunction {
 }
 
 /// Convenience function for pushing some full userdata onto the lua stack
-pub fn luaPushUdata(l: *c.lua_State, comptime T: type, tname: [*:0]const u8) *T {
+pub fn luaPushUdata(l: *c.lua_State, comptime T: type) *T {
     // create and set data
     const udata: *T = @ptrCast(@alignCast(c.lua_newuserdata(l, @sizeOf(T)).?));
 
     // set metatable
-    c.luaL_getmetatable(l, tname);
+    c.luaL_getmetatable(l, T.lua_registry_key);
     _ = c.lua_setmetatable(l, -2);
 
     return udata;
 }
 
-pub fn luaGetUdata(comptime T: type, l: *c.lua_State, param: c_int, tname: [*:0]const u8) *T {
-    return @ptrCast(@alignCast(c.luaL_checkudata(l, param, tname)));
+pub fn luaGetUdata(comptime T: type, l: *c.lua_State, param: c_int) *T {
+    return @ptrCast(@alignCast(c.luaL_checkudata(l, param, T.lua_registry_key)));
 }
 
 pub fn luaCheckString(l: *c.lua_State, idx: c_int) []const u8 {
