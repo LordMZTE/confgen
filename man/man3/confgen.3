@@ -72,8 +72,18 @@ Example:
 .B cg.addFile(\(dq.gtkrc-2.0\(dq)
 
 .TP
-.B cg.doTemplate(source)
+.B cg.doTemplate(source[, opt])
 Load some template code and immediately evaluate it, returning the resulting data as a string.
+The
+.I opt
+argument may optionally be provided. It may have 2 fields, both of which are optional: The
+.I opt
+field will be used for the template's option table instead of
+.I cg.opt
+and the
+.I name
+field will set a name for the source chunk, defaulting to
+.BR <dotemplate> .
 
 Example:
 .B local my_data = cg.doTemplate(\(dq<% 2 * 2 %>\(dq) -- \(dq4\(dq
