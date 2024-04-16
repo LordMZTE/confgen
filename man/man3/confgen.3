@@ -34,11 +34,23 @@ Example:
 .B cg.opt.font = \(dqMyFont\(dq
 
 .TP
-.B cg.addString(outpath, data)
+.B cg.addString(outpath, data[, copy])
 Add a configuration file
 .I outpath
 to the file list, its content being defined by
 .IR data .
+The
+.I copy
+argument may optionally be set to a boolean value, defaulting to
+.IR false .
+If
+.I copy
+is equal to
+.IR true ,
+the
+.I data
+argument will be directly written to the output file, otherwise, it is interpreted as a
+.IR template .
 
 Example:
 .B cg.addString(\(dq.config/example\(dq, \(dqkey = value\(dq)

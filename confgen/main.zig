@@ -194,12 +194,6 @@ fn genfile(
     const state = libcg.luaapi.getState(l);
 
     if (file.copy) {
-        const from_path = try std.fs.path.resolve(
-            std.heap.c_allocator,
-            &.{ state.rootpath, file.content.path },
-        );
-        defer std.heap.c_allocator.free(from_path);
-
         const to_path = try std.fs.path.join(
             std.heap.c_allocator,
             &.{ outpath_root, file_outpath },
@@ -210,7 +204,24 @@ fn genfile(
             try std.fs.cwd().makePath(dir);
         }
 
-        try std.fs.cwd().copyFile(from_path, std.fs.cwd(), to_path, .{});
+        switch (file.content) {
+            .path => |p| {
+                const from_path = try std.fs.path.resolve(
+                    std.heap.c_allocator,
+                    &.{ state.rootpath, p },
+                );
+                defer std.heap.c_allocator.free(from_path);
+
+                try std.fs.cwd().copyFile(from_path, std.fs.cwd(), to_path, .{});
+            },
+
+            .string => |s| {
+                var outfile = try std.fs.cwd().createFile(to_path, .{});
+                defer outfile.close();
+
+                try outfile.writeAll(s);
+            },
+        }
 
         return;
     }

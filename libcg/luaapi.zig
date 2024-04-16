@@ -225,6 +225,7 @@ fn lPrint(l: *c.lua_State) !c_int {
 fn lAddString(l: *c.lua_State) !c_int {
     const outpath = ffi.luaCheckString(l, 1);
     const data = ffi.luaCheckString(l, 2);
+    const copy = if (c.lua_gettop(l) >= 3) c.lua_toboolean(l, 3) != 0 else false;
 
     const state = getState(l);
 
@@ -236,6 +237,7 @@ fn lAddString(l: *c.lua_State) !c_int {
 
     if (try state.files.fetchPut(outpath_d, CgFile{
         .content = .{ .string = data_d },
+        .copy = copy,
     })) |old| {
         state.files.allocator.free(old.key);
         old.value.deinit(state.files.allocator);
