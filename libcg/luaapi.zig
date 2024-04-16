@@ -95,6 +95,9 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_pushcfunction(l, ffi.luaFunc(lDoTemplate));
     c.lua_setfield(l, -2, "doTemplate");
 
+    c.lua_pushcfunction(l, ffi.luaFunc(lDoTemplateFile));
+    c.lua_setfield(l, -2, "doTemplateFile");
+
     c.lua_pushcfunction(l, ffi.luaFunc(lOnDone));
     c.lua_setfield(l, -2, "onDone");
 
@@ -395,7 +398,78 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     return 1;
 }
 
-pub fn lOnDone(l: *c.lua_State) !c_int {
+fn lDoTemplateFile(l: *c.lua_State) !c_int {
+    const inpath = ffi.luaCheckString(l, 1);
+    const state = getState(l);
+
+    // check if there is an option table argument, otherwise create empty table
+    if (c.lua_gettop(l) < 2) {
+        c.lua_newtable(l);
+    } else {
+        c.luaL_checktype(l, 2, c.LUA_TTABLE);
+    }
+
+    // opt field of option table is alternative opt to pass to template
+    c.lua_getfield(l, 2, "opt");
+    if (c.lua_isnil(l, -1)) {
+        c.lua_remove(l, -1);
+
+        // push default opt table
+        c.lua_getglobal(l, "cg");
+        c.lua_getfield(l, -1, "opt");
+        c.lua_remove(l, -2);
+    }
+
+    // FIXME: This is a potential use-after-free! We should store the source string in a lua src
+    // object in the future.
+    const file_content = try std.fs.cwd().readFileAlloc(state.files.allocator, inpath, std.math.maxInt(usize));
+    defer state.files.allocator.free(file_content);
+
+    const tmpl = mkenv: {
+        var parser = Parser{ .str = file_content, .pos = 0 };
+        const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, inpath);
+        errdefer tmpl_code.deinit(state.files.allocator);
+
+        if (c.luaL_loadbuffer(
+            l,
+            tmpl_code.content.ptr,
+            tmpl_code.content.len,
+            tmpl_code.name.ptr,
+        ) != 0) {
+            // TODO: turn this into a lua error
+            std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
+            return error.LoadTemplate;
+        }
+
+        // create env
+        c.lua_newtable(l);
+        LTemplate.createTmplEnv(l);
+
+        // add opt
+        c.lua_pushvalue(l, -3);
+        c.lua_setfield(l, -2, "opt");
+
+        const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
+        c.lua_setfield(l, -2, "tmpl");
+        break :mkenv tmpl;
+    };
+
+    _ = c.lua_setfenv(l, -2);
+
+    if (c.lua_pcall(l, 0, 0, 0) != 0) {
+        // TODO: turn this into a lua error
+        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
+        return error.RunTemplate;
+    }
+
+    const output = try tmpl.getOutput(l);
+    defer state.files.allocator.free(output);
+
+    c.lua_pushlstring(l, output.ptr, output.len);
+    return 1;
+}
+
+fn lOnDone(l: *c.lua_State) !c_int {
     c.luaL_checktype(l, 1, c.LUA_TFUNCTION);
 
     c.lua_getfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
@@ -497,6 +571,7 @@ pub const LTemplate = struct {
 
         // call post processor
         if (c.lua_pcall(l, 1, 1, 0) != 0) {
+            // TODO: return this instead of logging
             std.log.err("running post processor: {s}", .{ffi.luaToString(l, -1)});
             return error.PostProcessor;
         }

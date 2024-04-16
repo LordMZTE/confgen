@@ -101,6 +101,17 @@ Example:
 .B local my_data = cg.doTemplate(\(dq<% 2 * 2 %>\(dq) -- \(dq4\(dq
 
 .TP
+.B cg.doTemplateFile(inpath[, opt])
+Identical to
+.IR doTemplate ,
+except that the template data is read from a given file and that the
+.I name
+option is not supported.
+
+Example:
+.B local generated = cg.doTemplateFile("path/to/template.cgt", { opt = { foo = bar } })
+
+.TP
 .B cg.onDone(callback)
 Add a callback function to be ran when confgen finishes. The
 .I callback
@@ -119,7 +130,7 @@ ConfgenFS will never call callbacks registered with
 .IR onDone .
 
 Example:
-.B cg.onDone(function(errors) print("Had errors: " .. tostring(errors)) end)
+.B cg.onDone(function(errors) print(\(dqHad errors: \(dq .. tostring(errors)) end)
 
 .TP
 .B cg.toJSON(value[, pretty])
