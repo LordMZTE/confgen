@@ -154,16 +154,11 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
             return error.LoadTemplate;
         }
 
-        // create template environment
+        // env table
         c.lua_newtable(l);
+        LTemplate.createTmplEnv(l);
 
-        // initialize environment metatable
-        c.lua_createtable(l, 0, 1);
-        c.lua_getglobal(l, "_G");
-        c.lua_setfield(l, -2, "__index");
-        _ = c.lua_setmetatable(l, -2);
-
-        // add cg.opt to context
+        // add opt
         c.lua_getglobal(l, "cg");
         c.lua_getfield(l, -1, "opt");
         c.lua_setfield(l, -3, "opt");
@@ -171,8 +166,8 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
 
         // initialize template
         const tmpl = (try LTemplate.init(code, state.files.allocator)).push(l);
-
         c.lua_setfield(l, -2, "tmpl");
+
         _ = c.lua_setfenv(l, -2);
 
         break :mkenv tmpl;
@@ -343,7 +338,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
         c.lua_remove(l, -1);
 
         // push default opt table
-        c.lua_getfield(l, c.LUA_GLOBALSINDEX, "cg");
+        c.lua_getglobal(l, "cg");
         c.lua_getfield(l, -1, "opt");
         c.lua_remove(l, -2);
     }
@@ -371,10 +366,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
         // create env table
         c.lua_newtable(l);
-
-        // add globals
-        c.lua_getfield(l, c.LUA_GLOBALSINDEX, "_G");
-        c.lua_setfield(l, -2, "_G");
+        LTemplate.createTmplEnv(l);
 
         // add opt
         c.lua_pushvalue(l, -4);
@@ -446,6 +438,16 @@ pub const LTemplate = struct {
     code: TemplateCode,
     mode: u24 = 0o644,
     output: std.ArrayList(u8),
+
+    /// Inserts standard values into an fenv table on top of the stack to be used for the
+    /// template environment. `tmpl` and `opt` must be manually added.
+    pub fn createTmplEnv(l: *c.lua_State) void {
+        // environment metatable to delegate to global env
+        c.lua_createtable(l, 0, 1);
+        c.lua_getglobal(l, "_G");
+        c.lua_setfield(l, -2, "__index");
+        _ = c.lua_setmetatable(l, -2);
+    }
 
     /// Code is owned by the LTemplate object, must be allocated with alloc.
     pub fn init(code: TemplateCode, alloc: std.mem.Allocator) !LTemplate {
