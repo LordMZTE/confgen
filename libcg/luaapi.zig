@@ -136,38 +136,47 @@ pub fn getState(l: *c.lua_State) *CgState {
     return @ptrCast(@alignCast(state_ptr));
 }
 
+/// Ownership of `code` is transferred to this function!
 pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const state = getState(l);
 
     const prevtop = c.lua_gettop(l);
     defer c.lua_settop(l, prevtop);
 
-    if (c.luaL_loadbuffer(l, code.content.ptr, code.content.len, code.name) != 0) {
-        std.log.err("failed to load template: {s}", .{ffi.luaToString(l, -1)});
+    const tmpl = mkenv: {
+        // We own code until the template has been pushed onto the lua stack and must free it
+        // in case of an error until then.
+        errdefer code.deinit(state.files.allocator);
 
-        return error.LoadTemplate;
-    }
+        if (c.luaL_loadbuffer(l, code.content.ptr, code.content.len, code.name) != 0) {
+            std.log.err("failed to load template: {s}", .{ffi.luaToString(l, -1)});
 
-    // create template environment
-    c.lua_newtable(l);
+            return error.LoadTemplate;
+        }
 
-    // initialize environment metatable
-    c.lua_createtable(l, 0, 1);
-    c.lua_getglobal(l, "_G");
-    c.lua_setfield(l, -2, "__index");
-    _ = c.lua_setmetatable(l, -2);
+        // create template environment
+        c.lua_newtable(l);
 
-    // add cg.opt to context
-    c.lua_getglobal(l, "cg");
-    c.lua_getfield(l, -1, "opt");
-    c.lua_setfield(l, -3, "opt");
-    c.lua_pop(l, 1);
+        // initialize environment metatable
+        c.lua_createtable(l, 0, 1);
+        c.lua_getglobal(l, "_G");
+        c.lua_setfield(l, -2, "__index");
+        _ = c.lua_setmetatable(l, -2);
 
-    // initialize template
-    const tmpl = (try LTemplate.init(code, state.files.allocator)).push(l);
+        // add cg.opt to context
+        c.lua_getglobal(l, "cg");
+        c.lua_getfield(l, -1, "opt");
+        c.lua_setfield(l, -3, "opt");
+        c.lua_pop(l, 1);
 
-    c.lua_setfield(l, -2, "tmpl");
-    _ = c.lua_setfenv(l, -2);
+        // initialize template
+        const tmpl = (try LTemplate.init(code, state.files.allocator)).push(l);
+
+        c.lua_setfield(l, -2, "tmpl");
+        _ = c.lua_setfenv(l, -2);
+
+        break :mkenv tmpl;
+    };
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
@@ -344,35 +353,38 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
         source_name = ffi.luaToString(l, -1);
     }
 
-    var parser = Parser{ .str = source, .pos = 0 };
-    const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, source_name);
-    defer tmpl_code.deinit(state.files.allocator);
+    const tmpl = mkenv: {
+        var parser = Parser{ .str = source, .pos = 0 };
+        const tmpl_code = try luagen.generateLua(state.files.allocator, &parser, source_name);
+        errdefer tmpl_code.deinit(state.files.allocator);
 
-    if (c.luaL_loadbuffer(
-        l,
-        tmpl_code.content.ptr,
-        tmpl_code.content.len,
-        tmpl_code.name.ptr,
-    ) != 0) {
-        // TODO: turn this into a lua error
-        std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
-        return error.LoadTemplate;
-    }
+        if (c.luaL_loadbuffer(
+            l,
+            tmpl_code.content.ptr,
+            tmpl_code.content.len,
+            tmpl_code.name.ptr,
+        ) != 0) {
+            // TODO: turn this into a lua error
+            std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
+            return error.LoadTemplate;
+        }
 
-    // create env table
-    c.lua_newtable(l);
+        // create env table
+        c.lua_newtable(l);
 
-    // add globals
-    c.lua_getfield(l, c.LUA_GLOBALSINDEX, "_G");
-    c.lua_setfield(l, -2, "_G");
+        // add globals
+        c.lua_getfield(l, c.LUA_GLOBALSINDEX, "_G");
+        c.lua_setfield(l, -2, "_G");
 
-    // add opt
-    c.lua_pushvalue(l, -4);
-    c.lua_setfield(l, -2, "opt");
+        // add opt
+        c.lua_pushvalue(l, -4);
+        c.lua_setfield(l, -2, "opt");
 
-    // add tmpl
-    const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
-    c.lua_setfield(l, -2, "tmpl");
+        // add tmpl
+        const tmpl = (try LTemplate.init(tmpl_code, state.files.allocator)).push(l);
+        c.lua_setfield(l, -2, "tmpl");
+        break :mkenv tmpl;
+    };
 
     _ = c.lua_setfenv(l, -2);
 
@@ -435,6 +447,7 @@ pub const LTemplate = struct {
     mode: u24 = 0o644,
     output: std.ArrayList(u8),
 
+    /// Code is owned by the LTemplate object, must be allocated with alloc.
     pub fn init(code: TemplateCode, alloc: std.mem.Allocator) !LTemplate {
         return .{
             .output = std.ArrayList(u8).init(alloc),
@@ -444,6 +457,7 @@ pub const LTemplate = struct {
 
     pub fn deinit(self: *LTemplate) void {
         self.output.deinit();
+        self.code.deinit(self.output.allocator);
     }
 
     pub fn push(self: LTemplate, l: *c.lua_State) *LTemplate {
@@ -458,6 +472,9 @@ pub const LTemplate = struct {
         return self_ptr;
     }
 
+    /// Returns the final template output, potentially calling the post-processor.
+    /// The output is allocated with the allocator this template was created with,
+    /// caller owns return value.
     fn getOutput(self: *LTemplate, l: *c.lua_State) ![]const u8 {
         const top = c.lua_gettop(l);
         defer c.lua_settop(l, top);
@@ -469,7 +486,7 @@ pub const LTemplate = struct {
 
         // check if there's no post processor
         if (c.lua_isnil(l, -1)) {
-            return try self.output.toOwnedSlice();
+            return try self.output.allocator.dupe(u8, self.output.items);
         }
 
         c.lua_pushlstring(l, self.output.items.ptr, self.output.items.len);

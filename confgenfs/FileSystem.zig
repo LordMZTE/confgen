@@ -531,7 +531,7 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
     };
 
     const tmpl = try libcg.luagen.generateLua(self.alloc, &parser, name);
-    defer tmpl.deinit(self.alloc);
+    errdefer tmpl.deinit(self.alloc);
 
     return try libcg.luaapi.generate(self.l, tmpl);
 }

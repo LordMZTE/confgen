@@ -239,10 +239,12 @@ fn genfile(
         .pos = 0,
     };
 
-    const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, &parser, fname orelse file_outpath);
-    defer tmpl.deinit(std.heap.c_allocator);
+    const out = gen: {
+        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, &parser, fname orelse file_outpath);
+        errdefer tmpl.deinit(std.heap.c_allocator);
 
-    const out = try libcg.luaapi.generate(l, tmpl);
+        break :gen try libcg.luaapi.generate(l, tmpl);
+    };
     defer std.heap.c_allocator.free(out.content);
 
     const path = try std.fs.path.join(
