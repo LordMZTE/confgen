@@ -346,6 +346,7 @@ meta_cache: Cache(FileMeta),
 /// An array storing all possible open file handles. When a new file is opened,
 /// the first unused is used.
 handles: [512]?FileHandle,
+
 fn init(init_data: InitData) !FileSystem {
     const cg_state = try init_data.alloc.create(libcg.luaapi.CgState);
     errdefer init_data.alloc.destroy(cg_state);
@@ -354,6 +355,8 @@ fn init(init_data: InitData) !FileSystem {
         .files = std.StringHashMap(libcg.luaapi.CgFile).init(init_data.alloc),
     };
     errdefer cg_state.deinit();
+
+    try std.posix.chdir(cg_state.rootpath);
 
     std.log.info("loading confgenfile @ {s}", .{init_data.confgenfile});
     const l = try libcg.luaapi.initLuaState(cg_state);
@@ -456,11 +459,8 @@ fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) 
         if (cgf.copy) {
             switch (cgf.content) {
                 .string => |s| size = s.len,
-                .path => |rel_path| {
-                    const actual_path = try std.fs.path.resolve(self.alloc, &.{ self.cg_state.rootpath, rel_path });
-                    defer self.alloc.free(actual_path);
-
-                    const stat = try std.fs.cwd().statFile(actual_path);
+                .path => |content_path| {
+                    const stat = try std.fs.cwd().statFile(content_path);
                     mode = @truncate(stat.mode);
                     size = stat.size;
                 },
@@ -500,13 +500,7 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
         // CgFile points to a file on disk, read it.
         .path => |rel_path| {
             self.genbuf.clearRetainingCapacity();
-            const path = try std.fs.path.resolve(
-                self.alloc,
-                &.{ self.cg_state.rootpath, rel_path },
-            );
-            defer self.alloc.free(path);
-
-            var file = try std.fs.cwd().openFile(path, .{});
+            var file = try std.fs.cwd().openFile(rel_path, .{});
             defer file.close();
 
             copy_mode = @truncate((try file.stat()).mode);

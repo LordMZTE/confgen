@@ -59,22 +59,6 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_pushcfunction(l, ffi.luaFunc(lPrint));
     c.lua_setfield(l, -2, "print");
 
-    // Add root path to package.path
-    c.lua_getfield(l, -1, "package");
-
-    const root_luapath_prefix = try std.fmt.allocPrintZ(
-        cgstate.files.allocator,
-        "{s}/?.lua;",
-        .{cgstate.rootpath},
-    );
-    defer cgstate.files.allocator.free(root_luapath_prefix);
-
-    c.lua_pushlstring(l, root_luapath_prefix.ptr, root_luapath_prefix.len);
-    c.lua_getfield(l, -2, "path");
-    c.lua_concat(l, 2);
-    c.lua_setfield(l, -2, "path");
-    c.lua_pop(l, 2);
-
     // create opt table
     c.lua_newtable(l);
 
@@ -256,10 +240,7 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    const resolved_path = try std.fs.path.resolve(state.files.allocator, &.{ state.rootpath, path });
-    defer state.files.allocator.free(resolved_path);
-
-    var dir = try std.fs.cwd().openDir(resolved_path, .{ .iterate = true });
+    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
 
     var iter = try dir.walk(state.files.allocator);

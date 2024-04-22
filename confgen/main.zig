@@ -96,6 +96,8 @@ pub fn run() !void {
         };
         defer state.deinit();
 
+        try std.posix.chdir(state.rootpath);
+
         const l = try libcg.luaapi.initLuaState(&state);
         defer libcg.c.lua_close(l);
 
@@ -136,12 +138,16 @@ pub fn run() !void {
     }
 
     const cgfile = arg.positionals[0];
+    const output_abs = try std.fs.realpathAlloc(std.heap.c_allocator, arg.positionals[1]);
+    defer std.heap.c_allocator.free(output_abs);
 
     var state = libcg.luaapi.CgState{
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
         .files = std.StringHashMap(libcg.luaapi.CgFile).init(std.heap.c_allocator),
     };
     defer state.deinit();
+
+    try std.posix.chdir(state.rootpath);
 
     const l = try libcg.luaapi.initLuaState(&state);
     defer libcg.c.lua_close(l);
@@ -166,7 +172,7 @@ pub fn run() !void {
             l,
             file,
             &content_buf,
-            arg.positionals[1],
+            output_abs,
             outpath,
         ) catch |e| {
             errors = true;
