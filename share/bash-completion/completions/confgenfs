@@ -1,0 +1,14 @@
+function __confgenfs_completion() {
+	if [ "${COMP_CWORD}" -eq 1 ]; then
+		COMPREPLY=($(compgen -A file -W "--help -h" -- "${COMP_WORDS[1]}"))
+	elif [ "${COMP_CWORD}" -eq 2 ]; then
+		case "${COMP_WORDS[1]}" in
+		"--help" | "-h") COMPREPLY=() ;;
+		*) COMPREPLY=($(compgen -A directory -- "${COMP_WORDS[2]}")) ;;
+		esac
+    else
+        COMPREPLY=()
+	fi
+}
+
+complete -F __confgenfs_completion confgenfs 

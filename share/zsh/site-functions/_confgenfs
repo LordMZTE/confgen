@@ -1,0 +1,12 @@
+#compdef confgenfs
+
+_confgenfs() {
+    _arguments \
+        '1:confgenfile:_files' \
+        '2:mountpoint:_directories' \
+        '*:fuse_opts:' \
+        '-h[Show help]' \
+        '--help[Show help]'
+}
+
+_confgenfs "$@"

@@ -1,0 +1,15 @@
+#compdef confgen
+
+_confgen() {
+    _arguments \
+        '1:confgenfile:_files' \
+        '2:outpath:_directories' \
+        '-h[Show help]' \
+        '--help[Show help]' \
+        '-c[Compile a template to Lua instead of running]:template_file:_files' \
+        '--compile[Compile a template to Lua instead of running]:template_file:_files' \
+        '-j[Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.]:confgenfile:_files' \
+        '--json-opt[Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.]:confgenfile:_files'
+}
+
+_confgen "$@"
