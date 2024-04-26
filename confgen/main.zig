@@ -54,6 +54,7 @@ pub fn main() u8 {
             //error.Explained => {},
             else => {
                 std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
+                if (@errorReturnTrace()) |ert| std.debug.dumpStackTrace(ert.*);
             },
         }
         return 1;
@@ -137,9 +138,21 @@ pub fn run() !void {
         return error.InvalidArguments;
     }
 
-    const cgfile = arg.positionals[0];
-    const output_abs = try std.fs.realpathAlloc(std.heap.c_allocator, arg.positionals[1]);
-    defer std.heap.c_allocator.free(output_abs);
+    var cgfile_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    const cgfile_nosentinel = try std.fs.realpath(
+        arg.positionals[0],
+        cgfile_buf[0 .. cgfile_buf.len - 1],
+    );
+    cgfile_buf[cgfile_nosentinel.len] = 0; // Is guaranteed to be in bounds
+    const cgfile: [:0]u8 = @ptrCast(cgfile_nosentinel);
+
+    std.fs.cwd().makeDir(arg.positionals[1]) catch |e| switch (e) {
+        error.PathAlreadyExists => {},
+        else => return e,
+    };
+
+    var output_abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const output_abs = try std.fs.realpath(arg.positionals[1], &output_abs_buf);
 
     var state = libcg.luaapi.CgState{
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
