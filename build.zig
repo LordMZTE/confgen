@@ -38,18 +38,11 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(confgen_exe);
 
-    inline for (.{
-        "share/man/man1/confgen.1",
-        "share/man/man3/confgen.3",
-        "share/man/man5/confgen-template.5",
-        "share/man/man5/confgen.lua.5",
-    }) |f| {
-        b.installFile(f, f);
-    }
-
-    if (confgenfs) {
-        b.installFile("share/man/man1/confgenfs.1", "share/man/man1/confgenfs.1");
-    }
+    b.installDirectory(.{
+        .source_dir = .{ .path = "share" },
+        .install_dir = .{ .custom = "share" },
+        .install_subdir = ".",
+    });
 
     const run_confgen_cmd = b.addRunArtifact(confgen_exe);
     run_confgen_cmd.step.dependOn(b.getInstallStep());
