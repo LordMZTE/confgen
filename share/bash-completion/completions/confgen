@@ -1,14 +1,22 @@
 function __confgen_completion() {
 	if [ "${COMP_CWORD}" -eq 1 ]; then
-		COMPREPLY=($(compgen -A file -W "--compile -c --json-opt -j --help -h" -- "${COMP_WORDS[1]}"))
+		COMPREPLY=($(compgen -A file -W "--compile -c --json-opt -j --help -h --file -f" -- "${COMP_WORDS[1]}"))
 	elif [ "${COMP_CWORD}" -eq 2 ]; then
 		case "${COMP_WORDS[1]}" in
 		"--help" | "-h") COMPREPLY=() ;;
-		"--compile" | "-c" | "--json-opt" | "-j")
+		"--compile" | "-c" | "--json-opt" | "-j" | "--file" | "-f")
 			compopt -o default
 			COMPREPLY=()
 			;;
 		*) COMPREPLY=($(compgen -A directory -- "${COMP_WORDS[2]}")) ;;
+		esac
+	elif [ "${COMP_CWORD}" -eq 3 ]; then
+		case "${COMP_WORDS[1]}" in
+		"-f" | "--file")
+			compopt -o default
+			COMPREPLY=()
+			;;
+		*) COMPREPLY=() ;;
 		esac
 	else
 		COMPREPLY=()

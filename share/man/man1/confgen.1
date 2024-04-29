@@ -14,6 +14,10 @@
 .B confgen --json-opt
 .RI [ CONFGENFILE ]
 .br
+.B confgen --file
+.RI [ TEMPLATE_FILE ]
+.RI [ OUTFILE ]
+.br
 .B confgen --help
 
 .SH DESCRIPTION
@@ -63,6 +67,19 @@ For the specifics of this, see the documentation for the
 .I cg.toJSON
 function in
 .BR confgen (3).
+
+.TP
+.B --file
+Do not generate files like normal, but instead load the 
+.I template file
+identified by the
+.IR first\ argument ,
+generate it and write the output to the file specified by the
+.IR second\ argument .
+
+The
+.I opt
+table will be empty and functions that normally add files to be generated will have no effect.
 
 .SH SEE ALSO
 .BR confgen (3),

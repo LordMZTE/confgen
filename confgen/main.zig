@@ -19,11 +19,13 @@ const Args = struct {
     compile: ?[]const u8 = null,
     /// Dump options identified by positional arguments.
     @"json-opt": ?[:0]const u8 = null,
+    file: bool = false,
     help: bool = false,
 
     pub const shorthands = .{
         .c = "compile",
         .j = "json-opt",
+        .f = "file",
         .h = "help",
     };
 };
@@ -33,12 +35,13 @@ const usage =
     \\LordMZTE <lord@mzte.de>
     \\
     \\Options:
-    \\    --compile, -c [TEMPLATE_FILE]      Compile a template to Lua instead of running. Useful for debugging.
-    \\    --json-opt, -j [CONFGENFILE]       Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
-    \\    --help, -h                         Show this help
+    \\    --compile, -c [TEMPLATE_FILE]        Compile a template to Lua instead of running. Useful for debugging.
+    \\    --json-opt, -j [CONFGENFILE]         Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
+    \\    --file, -f [TEMPLATE_FILE] [OUTFILE] Evaluate a single template and write the output instead of running.
+    \\    --help, -h                           Show this help
     \\
     \\Usage:
-    \\    confgen [CONFGENFILE] [OUTPATH]    Generate configs according the the supplied configuration file.
+    \\    confgen [CONFGENFILE] [OUTPATH]      Generate configs according the the supplied configuration file.
     \\
 ;
 
@@ -64,7 +67,16 @@ pub fn main() u8 {
 }
 
 pub fn run() !void {
-    const arg = try args.parseForCurrentProcess(Args, std.heap.c_allocator, .print);
+    var debug_gpa = if (@import("builtin").mode == .Debug) std.heap.GeneralPurposeAllocator(.{}){} else {};
+    defer if (@TypeOf(debug_gpa) != void) {
+        _ = debug_gpa.deinit();
+    };
+    const alloc = if (@TypeOf(debug_gpa) != void)
+        debug_gpa.allocator()
+    else
+        std.heap.c_allocator;
+
+    const arg = try args.parseForCurrentProcess(Args, alloc, .print);
     defer arg.deinit();
 
     if (arg.options.help) {
@@ -81,8 +93,8 @@ pub fn run() !void {
         const file = try std.fs.cwd().openFile(filepath, .{});
         defer file.close();
 
-        const content = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
-        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, content, filepath);
+        const content = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+        const tmpl = try libcg.luagen.generateLua(alloc, content, filepath);
         defer tmpl.deinit();
 
         try std.io.getStdOut().writeAll(tmpl.content);
@@ -93,7 +105,7 @@ pub fn run() !void {
     if (arg.options.@"json-opt") |cgfile| {
         var state = libcg.luaapi.CgState{
             .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-            .files = std.StringHashMap(libcg.luaapi.CgFile).init(std.heap.c_allocator),
+            .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
         };
         defer state.deinit();
 
@@ -106,7 +118,7 @@ pub fn run() !void {
 
         var bufwriter = std.io.bufferedWriter(std.io.getStdOut().writer());
         var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), .assumed_correct)
-            .init(std.heap.c_allocator, bufwriter.writer(), .{ .whitespace = .indent_2 });
+            .init(alloc, bufwriter.writer(), .{ .whitespace = .indent_2 });
         defer wstream.deinit();
 
         libcg.c.lua_getglobal(l, "cg");
@@ -129,6 +141,46 @@ pub fn run() !void {
         try bufwriter.writer().writeAll("\n");
 
         try bufwriter.flush();
+
+        return;
+    }
+
+    if (arg.options.file) {
+        if (arg.positionals.len != 2) {
+            std.log.err(
+                "Expected 2 positional arguments for single-file mode, got {}.",
+                .{arg.positionals.len},
+            );
+            return error.InvalidArguments;
+        }
+
+        var state = libcg.luaapi.CgState{
+            .rootpath = ".",
+            .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
+        };
+        defer state.deinit();
+
+        const l = try libcg.luaapi.initLuaState(&state);
+        defer libcg.c.lua_close(l);
+
+        const tmplsrc = try std.fs.cwd().readFileAlloc(
+            alloc,
+            arg.positionals[0],
+            std.math.maxInt(usize),
+        );
+        const tmplcode = try libcg.luagen.generateLua(
+            alloc,
+            tmplsrc,
+            arg.positionals[0],
+        );
+        const genf = try libcg.luaapi.generate(l, tmplcode);
+        defer alloc.free(genf.content);
+
+        const outfile = try std.fs.cwd().createFile(arg.positionals[1], .{ .mode = genf.mode });
+        defer outfile.close();
+        try outfile.writeAll(genf.content);
+
+        libcg.luaapi.callOnDoneCallbacks(l, false);
 
         return;
     }
@@ -156,7 +208,7 @@ pub fn run() !void {
 
     var state = libcg.luaapi.CgState{
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-        .files = std.StringHashMap(libcg.luaapi.CgFile).init(std.heap.c_allocator),
+        .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
     };
     defer state.deinit();
 
@@ -167,7 +219,7 @@ pub fn run() !void {
 
     try libcg.luaapi.loadCGFile(l, cgfile.ptr);
 
-    var content_buf = std.ArrayList(u8).init(std.heap.c_allocator);
+    var content_buf = std.ArrayList(u8).init(alloc);
     defer content_buf.deinit();
 
     var errors = false;
@@ -182,6 +234,7 @@ pub fn run() !void {
             std.log.info("generating  {s}", .{outpath});
         }
         genfile(
+            alloc,
             l,
             file,
             &content_buf,
@@ -197,6 +250,7 @@ pub fn run() !void {
 }
 
 fn genfile(
+    alloc: std.mem.Allocator,
     l: *libcg.c.lua_State,
     file: libcg.luaapi.CgFile,
     content_buf: *std.ArrayList(u8),
@@ -207,10 +261,10 @@ fn genfile(
 
     if (file.copy) {
         const to_path = try std.fs.path.join(
-            std.heap.c_allocator,
+            alloc,
             &.{ outpath_root, file_outpath },
         );
-        defer std.heap.c_allocator.free(to_path);
+        defer alloc.free(to_path);
 
         if (std.fs.path.dirname(to_path)) |dir| {
             try std.fs.cwd().makePath(dir);
@@ -219,10 +273,10 @@ fn genfile(
         switch (file.content) {
             .path => |p| {
                 const from_path = try std.fs.path.resolve(
-                    std.heap.c_allocator,
+                    alloc,
                     &.{ state.rootpath, p },
                 );
-                defer std.heap.c_allocator.free(from_path);
+                defer alloc.free(from_path);
 
                 try std.fs.cwd().copyFile(from_path, std.fs.cwd(), to_path, .{});
             },
@@ -245,8 +299,8 @@ fn genfile(
         .string => |s| content = s,
         .path => |p| {
             fname = std.fs.path.basename(p);
-            const path = try std.fs.path.join(std.heap.c_allocator, &.{ state.rootpath, p });
-            defer std.heap.c_allocator.free(path);
+            const path = try std.fs.path.join(alloc, &.{ state.rootpath, p });
+            defer alloc.free(path);
 
             const f = try std.fs.cwd().openFile(path, .{});
             defer f.close();
@@ -258,17 +312,17 @@ fn genfile(
     }
 
     const out = gen: {
-        const content_alloc = try std.heap.c_allocator.dupe(u8, content);
-        const tmpl = try libcg.luagen.generateLua(std.heap.c_allocator, content_alloc, fname orelse file_outpath);
+        const content_alloc = try alloc.dupe(u8, content);
+        const tmpl = try libcg.luagen.generateLua(alloc, content_alloc, fname orelse file_outpath);
         break :gen try libcg.luaapi.generate(l, tmpl);
     };
-    defer std.heap.c_allocator.free(out.content);
+    defer alloc.free(out.content);
 
     const path = try std.fs.path.join(
-        std.heap.c_allocator,
+        alloc,
         &.{ outpath_root, file_outpath },
     );
-    defer std.heap.c_allocator.free(path);
+    defer alloc.free(path);
 
     if (std.fs.path.dirname(path)) |dir| {
         try std.fs.cwd().makePath(dir);
