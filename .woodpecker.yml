@@ -1,6 +1,6 @@
 steps:
   build:
-    image: git.mzte.de/lordmzte/zig-build
+    image: git.mzte.de/lordmzte/zig-build:0.12.0
     commands:
       - apt update
       - apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3
