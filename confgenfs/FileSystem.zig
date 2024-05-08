@@ -80,10 +80,14 @@ const fuse_op_impl = struct {
         } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
-            break :blk .{ .cgfile = .{ .content = fs.generateOptsJSON() catch |e| {
-                std.log.err("generating opts.json: {}", .{e});
-                return errnoRet(.PERM);
-            }, .mode = 0o444 } };
+            break :blk .{ .cgfile = .{
+                .content = fs.generateOptsJSON() catch |e| {
+                    std.log.err("generating opts.json: {}", .{e});
+                    return errnoRet(.PERM);
+                },
+                .mode = 0o444,
+                .assume_deterministic = false,
+            } };
         } else blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
@@ -454,43 +458,50 @@ fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) 
     } else {
         std.log.debug("new in meta cache: {s}", .{path});
 
-        var mode: u24 = 0o444;
-        var size: u64 = 0;
         if (cgf.copy) {
+            var meta = FileMeta{
+                .mode = 0o444,
+                .size = 0,
+            };
             switch (cgf.content) {
-                .string => |s| size = s.len,
+                .string => |s| meta.size = s.len,
                 .path => |content_path| {
                     const stat = try std.fs.cwd().statFile(content_path);
-                    mode = @truncate(stat.mode);
-                    size = stat.size;
+                    meta.mode = @truncate(stat.mode);
+                    meta.mode &= 0o555; // read-only
+                    meta.size = stat.size;
                 },
             }
+
+            try self.updateMetaCache(path, meta);
+            return meta;
         } else {
+            // generateCGFile populates the meta cache for generated files
             const gen = try self.generateCGFile(cgf, path);
             defer self.alloc.free(gen.content);
-            mode = gen.mode;
-            // we technically know the size here, but given it's non-deterministic nature, we'll
-            // report 0 in order to prevent applications from naively reading too little data when
-            // the file is larger the next time it's generated.
+
+            return self.meta_cache.get(path) orelse blk: {
+                std.log.err(
+                    "Meta cache not populated for generated file '{s}'! This is a bug!",
+                    .{path},
+                );
+                break :blk .{ .mode = 0o444, .size = 0 };
+            };
         }
-
-        // Unset the write bits, confgenfs is always read-only.
-        mode &= 0o555;
-
-        const meta = FileMeta{
-            .mode = mode,
-            .size = size,
-        };
-
-        const path_d = try self.alloc.dupeZ(u8, path);
-        errdefer self.alloc.free(path_d);
-        try self.meta_cache.putNoClobber(path_d, meta);
-
-        return meta;
     }
 }
 
-fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8) !libcg.luaapi.GeneratedFile {
+fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void {
+    if (self.meta_cache.getPtr(name)) |m| {
+        m.* = meta;
+    } else {
+        const name_d = try self.alloc.dupeZ(u8, name);
+        errdefer self.alloc.free(name_d);
+        try self.meta_cache.putNoClobber(name_d, meta);
+    }
+}
+
+fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: [:0]const u8) !libcg.luaapi.GeneratedFile {
     var content: []const u8 = undefined;
     var copy_mode: u24 = 0o644;
     switch (cgf.content) {
@@ -514,14 +525,29 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: []const u8)
         std.log.info("copying {s}", .{name});
         return .{
             .content = try self.alloc.dupe(u8, content),
-            .mode = copy_mode,
+            .mode = copy_mode & 0o555, // read-only
+            .assume_deterministic = true,
         };
     }
 
     std.log.info("generating {s}", .{name});
     const src_alloc = try self.alloc.dupe(u8, content);
     const tmpl = try libcg.luagen.generateLua(self.alloc, src_alloc, name);
-    return try libcg.luaapi.generate(self.l, tmpl);
+    const genfile = try libcg.luaapi.generate(self.l, tmpl);
+
+    const meta = FileMeta{
+        .mode = genfile.mode,
+        // we technically know the size here, but given it's non-deterministic nature, we'll
+        // report 0 in order to prevent applications from naively reading too little data when
+        // the file is larger the next time it's generated, unless the file has
+        // assume_deterministic set in which case the user wishes for this behavior by asserting
+        // that the file size is constant.
+        .size = if (genfile.assume_deterministic) genfile.content.len else 0,
+    };
+
+    try self.updateMetaCache(name, meta);
+
+    return genfile;
 }
 
 fn generateOptsJSON(self: *FileSystem) ![]const u8 {

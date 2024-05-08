@@ -45,6 +45,7 @@ pub const GeneratedFile = struct {
     /// Typically allocated.
     content: []const u8,
     mode: u24,
+    assume_deterministic: bool,
 };
 
 pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
@@ -171,6 +172,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     return .{
         .content = try tmpl.getOutput(l),
         .mode = tmpl.mode,
+        .assume_deterministic = tmpl.assume_deterministic,
     };
 }
 
@@ -498,6 +500,7 @@ pub const LTemplate = struct {
     pub const lua_registry_key = "confgen_template";
 
     mode: u24 = 0o644,
+    assume_deterministic: bool = false,
     output: std.ArrayList(u8),
 
     /// Inserts standard values into an fenv table on top of the stack to be used for the
@@ -637,6 +640,16 @@ pub const LTemplate = struct {
         return 0;
     }
 
+    fn lSetAssumeDeterministic(l: *c.lua_State) !c_int {
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
+        c.luaL_checkany(l, 2);
+        const det = c.lua_toboolean(l, 2) != 0;
+
+        self.assume_deterministic = det;
+
+        return 0;
+    }
+
     fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, lua_registry_key);
 
@@ -654,6 +667,9 @@ pub const LTemplate = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lSetMode));
         c.lua_setfield(l, -2, "setMode");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lSetAssumeDeterministic));
+        c.lua_setfield(l, -2, "setAssumeDeterministic");
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");

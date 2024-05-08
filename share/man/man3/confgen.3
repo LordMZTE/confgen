@@ -210,6 +210,18 @@ to such an integer. Be careful not to mistakenly call it with a decimal number \
 Example:
 .B tmpl:setMode("755") -- Make file executable
 
+.TP
+.B tmpl:setAssumeDeterministic(assume_deterministic)
+Tell
+.I ConfgenFS
+that this template does not change when repeatedly evaluated. This causes
+.I ConfgenFS to report the size of the file's last evaluation when
+.I fstat
+is invoked.
+
+Example:
+.B tmpl:setAssumeDeterministic(true) -- File does not change; ConfgenFS reports size
+
 .SH SEE ALSO
 .BR confgen (1),
 .BR confgen.lua (5),
