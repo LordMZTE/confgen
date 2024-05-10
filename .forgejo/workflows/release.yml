@@ -1,7 +1,9 @@
-on: [push]
+on:
+  push:
+    tags: 'v.*'
 
 jobs:
-  build:
+  release:
     runs-on: docker
     steps:
       - name: Checkout
@@ -17,5 +19,16 @@ jobs:
           apt update
           apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3
 
-          zig fmt --check .
-          zig build test
+          zig build -Doptimize=ReleaseFast
+
+      - name: Zip
+        run: |
+          mkdir release
+          cd zig-out
+          zip -r ../release/confgen-linux-x86_64.zip .
+
+      - name: Upload
+        uses: actions/forgejo-release@v1
+        with:
+          direction: upload
+          release-dir: dist/release
