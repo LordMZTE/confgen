@@ -19,3 +19,21 @@ jobs:
           zig fmt --check .
           zig build test
           zig build -Doptimize=ReleaseFast
+
+  release:
+    on:
+      push:
+        tags: 'v.*'
+    runs-on: docker
+    needs: build
+    steps:
+      - name: Zip
+        run: |
+          mkdir release
+          cd zig-out
+          zip -r ../release/confgen-linux-x86_64.zip .
+      - name: Upload
+        uses: actions/forgejo-release@v1
+        with:
+          direction: upload
+          release-dir: dist/release
