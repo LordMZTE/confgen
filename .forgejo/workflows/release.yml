@@ -34,4 +34,5 @@ jobs:
         uses: actions/forgejo-release@v1
         with:
           direction: upload
-          release-dir: dist/release
+          release-dir: release
+          token: ${{ env.GITHUB_TOKEN }}

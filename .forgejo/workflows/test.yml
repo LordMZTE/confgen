@@ -7,15 +7,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Packages
-        run: |
-          apt update
-          apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3
-
       - name: Setup Zig
         uses: https://github.com/goto-bus-stop/setup-zig@v2
         with:
           version: 0.12.0
+
+      - name: Setup Packages
+        run: |
+          apt update
+          apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3
 
       - name: Test
         run: |
