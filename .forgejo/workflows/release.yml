@@ -5,7 +5,7 @@ on:
 
 jobs:
   release:
-    runs-on: docker
+    runs-on: docker-x86_64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
