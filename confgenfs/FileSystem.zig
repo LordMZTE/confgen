@@ -129,7 +129,7 @@ const fuse_op_impl = struct {
                     return 0;
 
                 const cont_off = content.content[@intCast(offset)..];
-                const len = @min(buf.len, content.content.len);
+                const len = @min(buf.len, cont_off.len);
                 @memcpy(buf[0..len], cont_off[0..len]);
                 return @intCast(len);
             },
