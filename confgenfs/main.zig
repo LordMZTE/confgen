@@ -24,9 +24,9 @@ const usage =
     \\LordMZTE <lord@mzte.de>
     \\
     \\Options:
+    \\    --help, -h                           Show this help
     \\    --eval, -e [CODE]                    Evaluate code before the confgenfile 
     \\    --post-eval, -p [CODE]               Evaluate code after the confgenfile
-    \\    --help, -h                           Show this help
     \\
     \\Usage:
     \\    confgenfs [CONFGENFILE] [MOUNTPOINT] <-- [FUSE_ARG]...>    Mount the configs for CONFGENFILE at MOUNTPOINT, passing optional additional arguments to FUSE
