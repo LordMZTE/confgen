@@ -21,12 +21,16 @@ const Args = struct {
     @"json-opt": ?[:0]const u8 = null,
     file: bool = false,
     help: bool = false,
+    eval: ?[]const u8 = null,
+    @"post-eval": ?[]const u8 = null,
 
     pub const shorthands = .{
         .c = "compile",
         .j = "json-opt",
         .f = "file",
         .h = "help",
+        .e = "eval",
+        .p = "post-eval",
     };
 };
 
@@ -38,6 +42,8 @@ const usage =
     \\    --compile, -c [TEMPLATE_FILE]        Compile a template to Lua instead of running. Useful for debugging.
     \\    --json-opt, -j [CONFGENFILE]         Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
     \\    --file, -f [TEMPLATE_FILE] [OUTFILE] Evaluate a single template and write the output instead of running.
+    \\    --eval, -e [CODE]                    Evaluate code before the confgenfile 
+    \\    --post-eval, -p [CODE]               Evaluate code after the confgenfile
     \\    --help, -h                           Show this help
     \\
     \\Usage:
@@ -54,7 +60,7 @@ pub fn main() u8 {
                     \\{s}
                 , .{usage});
             },
-            //error.Explained => {},
+            error.Explained => {},
             else => {
                 std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
                 if (@errorReturnTrace()) |ert| std.debug.dumpStackTrace(ert.*);
@@ -114,7 +120,15 @@ pub fn run() !void {
         const l = try libcg.luaapi.initLuaState(&state);
         defer libcg.c.lua_close(l);
 
+        if (arg.options.eval) |code| {
+            try libcg.luaapi.evalUserCode(l, code);
+        }
+
         try libcg.luaapi.loadCGFile(l, cgfile.ptr);
+
+        if (arg.options.@"post-eval") |code| {
+            try libcg.luaapi.evalUserCode(l, code);
+        }
 
         var bufwriter = std.io.bufferedWriter(std.io.getStdOut().writer());
         var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), .assumed_correct)
@@ -217,7 +231,15 @@ pub fn run() !void {
     const l = try libcg.luaapi.initLuaState(&state);
     defer libcg.c.lua_close(l);
 
+    if (arg.options.eval) |code| {
+        try libcg.luaapi.evalUserCode(l, code);
+    }
+
     try libcg.luaapi.loadCGFile(l, cgfile.ptr);
+
+    if (arg.options.@"post-eval") |code| {
+        try libcg.luaapi.evalUserCode(l, code);
+    }
 
     var content_buf = std.ArrayList(u8).init(alloc);
     defer content_buf.deinit();

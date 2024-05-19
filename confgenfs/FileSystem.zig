@@ -18,6 +18,8 @@ pub const fuse_ops = ops: {
 pub const InitData = struct {
     alloc: std.mem.Allocator,
     confgenfile: [:0]const u8,
+    eval: ?[]const u8,
+    post_eval: ?[]const u8,
     fuse: *c.fuse,
     err: ?anyerror,
 };
@@ -364,7 +366,16 @@ fn init(init_data: InitData) !FileSystem {
 
     std.log.info("loading confgenfile @ {s}", .{init_data.confgenfile});
     const l = try libcg.luaapi.initLuaState(cg_state);
+
+    if (init_data.eval) |code| {
+        try libcg.luaapi.evalUserCode(l, code);
+    }
+
     try libcg.luaapi.loadCGFile(l, init_data.confgenfile);
+
+    if (init_data.post_eval) |code| {
+        try libcg.luaapi.evalUserCode(l, code);
+    }
 
     var self = FileSystem{
         .alloc = init_data.alloc,

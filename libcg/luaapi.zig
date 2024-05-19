@@ -117,6 +117,17 @@ pub fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
     }
 }
 
+pub fn evalUserCode(l: *c.lua_State, code: []const u8) !void {
+    if (c.luaL_loadbuffer(l, code.ptr, code.len, "<eval>") != 0) {
+        std.log.err("loading user code: {s}", .{ffi.luaToString(l, -1)});
+        return error.Explained;
+    }
+    if (c.lua_pcall(l, 0, 0, 0) != 0) {
+        std.log.err("evaluating user code: {s}", .{ffi.luaToString(l, -1)});
+        return error.Explained;
+    }
+}
+
 pub fn getState(l: *c.lua_State) *CgState {
     c.lua_getfield(l, c.LUA_REGISTRYINDEX, state_key);
     const state_ptr = c.lua_touserdata(l, -1);

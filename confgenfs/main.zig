@@ -7,12 +7,26 @@ const ffi = @import("ffi.zig");
 
 const FileSystem = @import("FileSystem.zig");
 
+const Args = struct {
+    help: bool = false,
+    eval: ?[]const u8 = null,
+    @"post-eval": ?[]const u8 = null,
+
+    pub const shorthands = .{
+        .h = "help",
+        .e = "eval",
+        .p = "post-eval",
+    };
+};
+
 const usage =
     \\==== ConfgenFS - FUSE3 filesystem for the Confgen template engine ====
     \\LordMZTE <lord@mzte.de>
     \\
     \\Options:
-    \\    --help, -h                                                 Show this help
+    \\    --help, -h                           Show this help
+    \\    --eval, -e [CODE]                    Evaluate code before the confgenfile 
+    \\    --post-eval, -p [CODE]               Evaluate code after the confgenfile
     \\
     \\Usage:
     \\    confgenfs [CONFGENFILE] [MOUNTPOINT] <-- [FUSE_ARG]...>    Mount the configs for CONFGENFILE at MOUNTPOINT, passing optional additional arguments to FUSE
@@ -49,8 +63,13 @@ pub fn run() !void {
     else
         std.heap.c_allocator;
 
-    const arg = try args.parseForCurrentProcess(struct {}, alloc, .print);
+    const arg = try args.parseForCurrentProcess(Args, alloc, .print);
     defer arg.deinit();
+
+    if (arg.options.help) {
+        try std.io.getStdOut().writeAll(usage);
+        return;
+    }
 
     if (arg.positionals.len < 2) {
         std.log.err("Expected 2 or more arguments, got {}.", .{arg.positionals.len});
@@ -62,6 +81,8 @@ pub fn run() !void {
     var init_data = FileSystem.InitData{
         .alloc = alloc,
         .confgenfile = arg.positionals[0],
+        .eval = arg.options.eval,
+        .post_eval = arg.options.@"post-eval",
         .fuse = undefined,
         .err = null,
     };
