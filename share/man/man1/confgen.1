@@ -7,6 +7,8 @@
 .B confgen
 .RI [ CONFGENFILE ]
 .RI [ OUTPATH ]
+.RI < --eval\ [CODE] >
+.RI < --post-eval\ [CODE] >
 .br
 .B confgen --compile
 .RI [ TEMPLATE_FILE ]
@@ -80,6 +82,20 @@ generate it and write the output to the file specified by the
 The
 .I opt
 table will be empty and functions that normally add files to be generated will have no effect.
+
+.TP
+.B --eval [CODE]
+Evaluate the given
+.I lua code
+before loading the
+.IR confgenfile .
+
+.TP
+.B --post-eval [CODE]
+Evaluate the given
+.I lua code
+after loading the
+.IR confgenfile .
 
 .SH SEE ALSO
 .BR confgen (3),

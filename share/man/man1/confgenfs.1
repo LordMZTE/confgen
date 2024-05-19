@@ -9,6 +9,8 @@ template engine.
 .B confgenfs
 .RI [ CONFGENFILE ]
 .RI [ MOUNTPOINT ]
+.RI < --eval\ [CODE] >
+.RI < --post-eval\ [CODE] >
 .br
 .B confgenfs --help
 
@@ -62,6 +64,21 @@ parameter.
 .TP
 .B --help
 Show a help message.
+
+.TP
+.B --eval [CODE]
+Evaluate the given
+.I lua code
+before loading the
+.IR confgenfile .
+
+.TP
+.B --post-eval [CODE]
+Evaluate the given
+.I lua code
+after loading the
+.IR confgenfile .
+
 
 .SH EXAMPLES
 Change an option representing the currently in-use wayland compositor at runtime by executing
