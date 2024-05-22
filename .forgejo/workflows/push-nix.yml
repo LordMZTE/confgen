@@ -1,0 +1,35 @@
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  push-nix:
+    runs-on: docker-x86_64
+    steps:
+      - name: Install Packages
+        run: |
+          apt update
+          apt install -y sudo
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: https://github.com/cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            substituters = https://nix.mzte.de/mzte https://cache.nixos.org
+            trusted-public-keys = mzte:nH2vGx119m6VyU6we113jgo+RVEBlj+1oYWvOXcwGFM= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Build Derivation
+        run: |
+          nix build
+
+      - name: Install & Push to Attic
+        run: |
+          # Cached in MZTE cache
+          nix profile install github:zhaofengli/attic
+
+          attic login mzte https://nix.mzte.de ${{ secrets.ATTIC_TOKEN }}
+          attic push mzte result
