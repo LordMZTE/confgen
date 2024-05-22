@@ -1,8 +1,19 @@
-# confgen
+# Confgen
 
-confgen is a tool to generate config files using a custom template language.
+Confgen is a tool to generate config files using a custom template language.
 
 The system is backed by a Lua runtime that is used to configure the tool.
+
+## Installation
+
+You can find binaries built on a Debian box in the releases tab, or build yourself like any other
+Zig project.
+
+### Nix
+
+This project includes a Nix flake you can depend on. Additionally, the Confgen derivation as well as
+derivations of other projects of mine are automatically built and pushed to an attic cache at
+`https://nix.mzte.de/mzte` on every commit.
 
 ## Usage
 
