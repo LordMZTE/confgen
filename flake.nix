@@ -23,7 +23,7 @@
         dontConfigure = true;
 
         nativeBuildInputs = with pkgs; [
-          zig_0_12.hook
+          zig_0_13.hook
           pkg-config
           luajit
           fuse3

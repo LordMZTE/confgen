@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     }).module("args");
 
     const libcg = b.createModule(.{
-        .root_source_file = .{ .path = "libcg/main.zig" },
+        .root_source_file = b.path("libcg/main.zig"),
         .link_libc = true,
         .target = target,
         .optimize = optimize,
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
 
     const confgen_exe = b.addExecutable(.{
         .name = "confgen",
-        .root_source_file = .{ .path = "confgen/main.zig" },
+        .root_source_file = b.path("confgen/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(confgen_exe);
 
     b.installDirectory(.{
-        .source_dir = .{ .path = "share" },
+        .source_dir = b.path("share"),
         .install_dir = .{ .custom = "share" },
         .install_subdir = ".",
     });
@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
     run_confgen_step.dependOn(&run_confgen_cmd.step);
 
     const exe_confgen_tests = b.addTest(.{
-        .root_source_file = .{ .path = "confgen/main.zig" },
+        .root_source_file = b.path("confgen/main.zig"),
         .link_libc = true,
         .target = target,
         .optimize = optimize,
@@ -65,7 +65,7 @@ pub fn build(b: *std.Build) void {
     if (confgenfs) {
         const confgenfs_exe = b.addExecutable(.{
             .name = "confgenfs",
-            .root_source_file = .{ .path = "confgenfs/main.zig" },
+            .root_source_file = b.path("confgen/main.zig"),
             .link_libc = true,
             .target = target,
             .optimize = optimize,
