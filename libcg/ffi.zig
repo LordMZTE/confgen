@@ -46,7 +46,17 @@ pub fn luaCheckString(l: *c.lua_State, idx: c_int) []const u8 {
     return c.luaL_checklstring(l, idx, &len)[0..len];
 }
 
-pub fn luaToString(l: *c.lua_State, idx: c_int) []const u8 {
+pub fn luaToString(l: *c.lua_State, idx: c_int) ?[]const u8 {
     var len: usize = 0;
-    return c.lua_tolstring(l, idx, &len)[0..len];
+    return (@as(?[*]const u8, c.lua_tolstring(l, idx, &len)) orelse return null)[0..len];
+}
+
+pub fn luaConvertString(l: *c.lua_State, idx: c_int) []const u8 {
+    c.lua_pushvalue(l, idx);
+    c.lua_getglobal(l, "tostring");
+    c.lua_insert(l, -2);
+    c.lua_call(l, 1, 1);
+    const s = luaToString(l, -1) orelse unreachable;
+    c.lua_pop(l, 1);
+    return s;
 }

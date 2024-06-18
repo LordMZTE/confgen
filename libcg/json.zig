@@ -57,7 +57,7 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
                     // Need to duplicate the key in order to call luaToString.
                     // Direct call may break lua_next
                     c.lua_pushvalue(l, -2);
-                    try stream.objectField(ffi.luaToString(l, -1));
+                    try stream.objectField(ffi.luaConvertString(l, -1));
                     c.lua_pop(l, 1);
                 }
                 try luaToJSON(l, stream);

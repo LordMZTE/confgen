@@ -40,6 +40,8 @@ pub const TemplateCode = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lGC));
         c.lua_setfield(l, -2, "__gc");
+
+        c.lua_pop(l, 1);
     }
 };
 

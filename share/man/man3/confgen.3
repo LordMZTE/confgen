@@ -147,6 +147,37 @@ Example:
 .B local json = cg.toJSON({ x = \(dqy\(dq }) -- '{\(dqx\(dq: \(dqy\(dq}'
 
 .TP
+.B cg.fileIter()
+Obtain an
+.I iterator function
+over the files that have been added to confgen. Upon each invocation, it will return a table with
+the following fields:
+
+.IP \(bu
+The
+.I path
+field will contain the path of the output file relative to the 
+.IR destination\ directory .
+
+.IP \(bu
+The
+.I copy
+field will be set to
+.I true
+if the file is not a template and will be simply copied to the destination and
+.I false
+if the file is a template and will have generation done first.
+
+.IP \(bu
+The
+.I content
+field will be a table, either containing the file's source code in its
+.I string
+field, or the path to the source file in its
+.I path
+field.
+
+.TP
 .B tmpl
 The global value
 .I tmpl
@@ -170,7 +201,9 @@ Example:
 .B tmpl:pushValue(value)
 Push a Lua value to the output buffer. The values will be converted to strings the same as Lua's
 .I tostring
-would. This function is rarely called manually and is instead what
+would, except that
+.I nil
+is ignored and nothing is appended. This function is rarely called manually and is instead what
 .I Confgen
 generates for
 .IR Lua\ expression\ blocks .

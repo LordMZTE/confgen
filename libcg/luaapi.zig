@@ -12,7 +12,12 @@ pub const CgState = struct {
     rootpath: []const u8,
     files: std.StringHashMap(CgFile),
 
+    /// Number of currently alive iterators over the files map. This is in place to cause an error
+    /// when the user attempts concurrent modification.
+    nfile_iters: usize = 0,
+
     pub fn deinit(self: *CgState) void {
+        std.debug.assert(self.nfile_iters == 0);
         var iter = self.files.iterator();
         while (iter.next()) |kv| {
             self.files.allocator.free(kv.key_ptr.*);
@@ -88,6 +93,9 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_pushcfunction(l, ffi.luaFunc(lToJSON));
     c.lua_setfield(l, -2, "toJSON");
 
+    c.lua_pushcfunction(l, ffi.luaFunc(lFileIter));
+    c.lua_setfield(l, -2, "fileIter");
+
     // add cg table to globals
     c.lua_setglobal(l, "cg");
 
@@ -100,6 +108,7 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     c.lua_setfield(l, c.LUA_REGISTRYINDEX, on_done_callbacks_key);
 
     LTemplate.initMetatable(l);
+    LFileIter.initMetatable(l);
     TemplateCode.initMetatable(l);
 
     return l;
@@ -107,23 +116,23 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
 
 pub fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
     if (c.luaL_loadfile(l, cgfile) != 0) {
-        std.log.err("loading confgen file: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("loading confgen file: {?s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("running confgen file: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("running confgen file: {?s}", .{ffi.luaToString(l, -1)});
         return error.RootfileExec;
     }
 }
 
 pub fn evalUserCode(l: *c.lua_State, code: []const u8) !void {
     if (c.luaL_loadbuffer(l, code.ptr, code.len, "<eval>") != 0) {
-        std.log.err("loading user code: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("loading user code: {?s}", .{ffi.luaToString(l, -1)});
         return error.Explained;
     }
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("evaluating user code: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("evaluating user code: {?s}", .{ffi.luaToString(l, -1)});
         return error.Explained;
     }
 }
@@ -148,7 +157,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
         errdefer code.deinit();
 
         if (c.luaL_loadbuffer(l, code.content.ptr, code.content.len, code.name) != 0) {
-            std.log.err("failed to load template: {s}", .{ffi.luaToString(l, -1)});
+            std.log.err("failed to load template: {?s}", .{ffi.luaToString(l, -1)});
 
             return error.LoadTemplate;
         }
@@ -175,7 +184,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
 
         return error.RunTemplate;
     }
@@ -197,7 +206,7 @@ pub fn callOnDoneCallbacks(l: *c.lua_State, errors: bool) void {
         c.lua_pushboolean(l, @intFromBool(errors));
         if (c.lua_pcall(l, 1, 0, 0) != 0) {
             const err_s = ffi.luaToString(l, -1);
-            std.log.err("running onDone callback: {s}", .{err_s});
+            std.log.err("running onDone callback: {?s}", .{err_s});
             c.lua_pop(l, 1);
         }
     }
@@ -213,7 +222,7 @@ fn lPrint(l: *c.lua_State) !c_int {
     try writer.writeAll("\x1b[1;34mL:\x1b[0m ");
 
     for (0..@intCast(nargs)) |i| {
-        const s = ffi.luaToString(l, @intCast(i + 1));
+        const s = ffi.luaConvertString(l, @intCast(i + 1));
         try writer.writeAll(s);
         if (i + 1 != nargs)
             try writer.writeByte('\t');
@@ -230,6 +239,8 @@ fn lAddString(l: *c.lua_State) !c_int {
     const copy = if (c.lua_gettop(l) >= 3) c.lua_toboolean(l, 3) != 0 else false;
 
     const state = getState(l);
+
+    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
 
     const outpath_d = try state.files.allocator.dupe(u8, outpath);
     errdefer state.files.allocator.free(outpath_d);
@@ -252,6 +263,8 @@ fn lAddPath(l: *c.lua_State) !c_int {
     const targpath = if (c.lua_gettop(l) >= 2) ffi.luaCheckString(l, 2) else path;
 
     const state = getState(l);
+
+    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
 
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
@@ -288,6 +301,8 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
 fn lAddFile(l: *c.lua_State) !c_int {
     const state = getState(l);
+
+    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
 
     const argc = c.lua_gettop(l);
 
@@ -346,7 +361,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
     c.lua_getfield(l, 2, "name");
     if (!c.lua_isnil(l, -1)) {
-        source_name = ffi.luaToString(l, -1);
+        source_name = ffi.luaToString(l, -1) orelse return error.InvalidArgument;
     }
 
     {
@@ -363,7 +378,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
             tmpl_code.name.ptr,
         ) != 0) {
             // TODO: turn this into a lua error
-            std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
+            std.log.err("loading template: {?s}", .{ffi.luaToString(l, -1)});
             return error.LoadTemplate;
         }
 
@@ -388,7 +403,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         // TODO: turn this into a lua error
-        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
         return error.RunTemplate;
     }
 
@@ -433,7 +448,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
             tmpl_code.name.ptr,
         ) != 0) {
             // TODO: turn this into a lua error
-            std.log.err("loading template: {s}", .{ffi.luaToString(l, -1)});
+            std.log.err("loading template: {?s}", .{ffi.luaToString(l, -1)});
             return error.LoadTemplate;
         }
 
@@ -457,7 +472,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         // TODO: turn this into a lua error
-        std.log.err("failed to run template: {s}", .{ffi.luaToString(l, -1)});
+        std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
         return error.RunTemplate;
     }
 
@@ -481,7 +496,7 @@ fn lOnDone(l: *c.lua_State) !c_int {
     return 0;
 }
 
-pub fn lToJSON(l: *c.lua_State) !c_int {
+fn lToJSON(l: *c.lua_State) !c_int {
     c.luaL_checkany(l, 1);
     const pretty = if (c.lua_gettop(l) >= 2) c.lua_toboolean(l, 2) != 0 else false;
 
@@ -506,6 +521,83 @@ pub fn lToJSON(l: *c.lua_State) !c_int {
     c.lua_pushlstring(l, written.ptr, written.len);
     return 1;
 }
+
+fn lFileIter(l: *c.lua_State) !c_int {
+    const state = getState(l);
+
+    state.nfile_iters += 1;
+
+    _ = (LFileIter{ .iter = state.files.iterator() }).push(l);
+
+    return 1;
+}
+
+pub const LFileIter = struct {
+    pub const lua_registry_key = "confgen_file_iter";
+
+    iter: std.StringHashMap(CgFile).Iterator,
+
+    pub fn push(self: LFileIter, l: *c.lua_State) *LFileIter {
+        const self_ptr = ffi.luaPushUdata(l, LFileIter);
+        self_ptr.* = self;
+        return self_ptr;
+    }
+
+    fn lGC(l: *c.lua_State) !c_int {
+        const state = getState(l);
+        state.nfile_iters -= 1;
+
+        return 0;
+    }
+
+    fn lCall(l: *c.lua_State) !c_int {
+        const self = ffi.luaGetUdata(LFileIter, l, 1);
+
+        if (self.iter.next()) |kv| {
+            c.lua_createtable(l, 0, 3);
+
+            c.lua_pushlstring(l, kv.key_ptr.ptr, kv.key_ptr.len);
+            c.lua_setfield(l, -2, "path");
+
+            c.lua_pushboolean(l, @intFromBool(kv.value_ptr.copy));
+            c.lua_setfield(l, -2, "copy");
+
+            { // content
+                c.lua_createtable(l, 0, 1);
+
+                switch (kv.value_ptr.content) {
+                    .path => |p| {
+                        c.lua_pushlstring(l, p.ptr, p.len);
+                        c.lua_setfield(l, -2, "path");
+                    },
+                    .string => |s| {
+                        c.lua_pushlstring(l, s.ptr, s.len);
+                        c.lua_setfield(l, -2, "string");
+                    },
+                }
+
+                c.lua_setfield(l, -2, "content");
+            }
+
+            return 1;
+        } else {
+            c.lua_pushnil(l);
+            return 1;
+        }
+    }
+
+    fn initMetatable(l: *c.lua_State) void {
+        _ = c.luaL_newmetatable(l, lua_registry_key);
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lGC));
+        c.lua_setfield(l, -2, "__gc");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lCall));
+        c.lua_setfield(l, -2, "__call");
+
+        c.lua_pop(l, 1);
+    }
+};
 
 pub const LTemplate = struct {
     pub const lua_registry_key = "confgen_template";
@@ -568,11 +660,11 @@ pub const LTemplate = struct {
         // call post processor
         if (c.lua_pcall(l, 1, 1, 0) != 0) {
             // TODO: return this instead of logging
-            std.log.err("running post processor: {s}", .{ffi.luaToString(l, -1)});
+            std.log.err("running post processor: {?s}", .{ffi.luaToString(l, -1)});
             return error.PostProcessor;
         }
 
-        const out = ffi.luaToString(l, -1);
+        const out = ffi.luaConvertString(l, -1);
 
         return try self.output.allocator.dupe(u8, out);
     }
@@ -604,8 +696,11 @@ pub const LTemplate = struct {
     }
 
     fn lPushValue(l: *c.lua_State) !c_int {
+        c.luaL_checkany(l, 2);
+        if (c.lua_isnil(l, 2)) return 0; // do nothing if passed nil
+
         const self = ffi.luaGetUdata(LTemplate, l, 1);
-        try self.output.appendSlice(ffi.luaCheckString(l, 2));
+        try self.output.appendSlice(ffi.luaConvertString(l, 2));
 
         return 0;
     }
@@ -632,7 +727,7 @@ pub const LTemplate = struct {
 
         const mode = mode: {
             if (c.lua_isstring(l, 2) != 0) {
-                const s = ffi.luaToString(l, 2);
+                const s = ffi.luaToString(l, 2) orelse unreachable;
                 if (s.len != 3) break :mode null;
                 break :mode std.fmt.parseInt(u24, s, 8) catch null;
             } else if (c.lua_isnumber(l, 2) != 0) {
@@ -684,5 +779,7 @@ pub const LTemplate = struct {
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");
+
+        c.lua_pop(l, 1);
     }
 };
