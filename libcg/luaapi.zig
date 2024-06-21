@@ -448,7 +448,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
             tmpl_code.name.ptr,
         ) != 0) {
             // TODO: turn this into a lua error
-            std.log.err("loading template: {?s}", .{ffi.luaToString(l, -1)});
+            std.log.err("loading template: {?s}", .{ffi.luaConvertString(l, -1)});
             return error.LoadTemplate;
         }
 

@@ -65,7 +65,7 @@ pub fn build(b: *std.Build) void {
     if (confgenfs) {
         const confgenfs_exe = b.addExecutable(.{
             .name = "confgenfs",
-            .root_source_file = b.path("confgen/main.zig"),
+            .root_source_file = b.path("confgenfs/main.zig"),
             .link_libc = true,
             .target = target,
             .optimize = optimize,

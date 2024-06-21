@@ -582,13 +582,13 @@ fn generateOptsJSON(self: *FileSystem) ![]const u8 {
 
 fn eval(self: *FileSystem, code: []const u8) !void {
     if (libcg.c.luaL_loadbuffer(self.l, code.ptr, code.len, "<cgfs-eval>") != 0) {
-        std.log.err("unable to load eval code: {s}", .{libcg.ffi.luaToString(self.l, -1)});
+        std.log.err("unable to load eval code: {?s}", .{libcg.ffi.luaToString(self.l, -1)});
         libcg.c.lua_pop(self.l, 1);
         return error.InvalidEvalCode;
     }
 
     if (libcg.c.lua_pcall(self.l, 0, 0, 0) != 0) {
-        std.log.err("unable to run eval code: {s}", .{libcg.ffi.luaToString(self.l, -1)});
+        std.log.err("unable to run eval code: {?s}", .{libcg.ffi.luaToString(self.l, -1)});
         libcg.c.lua_pop(self.l, 1);
         return error.InvalidEvalCode;
     }
