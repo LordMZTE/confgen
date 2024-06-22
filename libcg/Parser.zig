@@ -1,3 +1,6 @@
+// FIXME: This whole thing badly needs to be reworked! It barely works, has some nonsensical design
+// in places, misses some errors like incorrect delimiters and tends to crash.
+
 const std = @import("std");
 const c = @import("ffi.zig").c;
 
@@ -49,6 +52,7 @@ pub fn next(self: *Parser) !?Token {
             self.pos = i + 1;
             current_type = .lua_literal;
         } else if (std.mem.eql(u8, charpair, "%>")) {
+            // FIXME: underflow on mismatched delimiters
             depth -= 1;
             if (depth > 0)
                 continue;
@@ -120,6 +124,8 @@ pub fn next(self: *Parser) !?Token {
     };
 
     self.pos = i;
+
+    // FIXME: Unclosed delimeters not properly detected! Example: "<%"
 
     return tok;
 }

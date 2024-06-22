@@ -8,6 +8,8 @@ const TemplateCode = luagen.TemplateCode;
 pub const state_key = "cg_state";
 pub const on_done_callbacks_key = "on_done_callbacks";
 
+const iters_alive_errmsg = "Cannot add file as file iterators are still alive!";
+
 pub const CgState = struct {
     rootpath: []const u8,
     files: std.StringHashMap(CgFile),
@@ -240,7 +242,10 @@ fn lAddString(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
+    if (state.nfile_iters != 0) {
+        ffi.luaPushString(l, iters_alive_errmsg);
+        return error.LuaError;
+    }
 
     const outpath_d = try state.files.allocator.dupe(u8, outpath);
     errdefer state.files.allocator.free(outpath_d);
@@ -264,7 +269,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
 
     const state = getState(l);
 
-    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
+    if (state.nfile_iters != 0) {
+        ffi.luaPushString(l, iters_alive_errmsg);
+        return error.LuaError;
+    }
 
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
@@ -302,7 +310,10 @@ fn lAddPath(l: *c.lua_State) !c_int {
 fn lAddFile(l: *c.lua_State) !c_int {
     const state = getState(l);
 
-    if (state.nfile_iters != 0) return error.IteratorsAlive; // TODO: Nicer error
+    if (state.nfile_iters != 0) {
+        ffi.luaPushString(l, iters_alive_errmsg);
+        return error.LuaError;
+    }
 
     const argc = c.lua_gettop(l);
 
@@ -377,9 +388,8 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
             tmpl_code.content.len,
             tmpl_code.name.ptr,
         ) != 0) {
-            // TODO: turn this into a lua error
-            std.log.err("loading template: {?s}", .{ffi.luaToString(l, -1)});
-            return error.LoadTemplate;
+            try ffi.luaFmtString(l, "loading template:\n{?s}", .{ffi.luaToString(l, -1)});
+            return error.LuaError;
         }
 
         // create env table
@@ -402,9 +412,8 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        // TODO: turn this into a lua error
-        std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
-        return error.RunTemplate;
+        try ffi.luaFmtString(l, "failed to run template:\n{?s}", .{ffi.luaToString(l, -1)});
+        return error.LuaError;
     }
 
     const output = try tmpl.getOutput(l);
@@ -447,9 +456,8 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
             tmpl_code.content.len,
             tmpl_code.name.ptr,
         ) != 0) {
-            // TODO: turn this into a lua error
-            std.log.err("loading template: {?s}", .{ffi.luaConvertString(l, -1)});
-            return error.LoadTemplate;
+            try ffi.luaFmtString(l, "loading template:\n{?s}", .{ffi.luaToString(l, -1)});
+            return error.LuaError;
         }
 
         // create env
@@ -471,9 +479,8 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
     _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
-        // TODO: turn this into a lua error
-        std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
-        return error.RunTemplate;
+        try ffi.luaFmtString(l, "failed to run template:\n{?s}", .{ffi.luaToString(l, -1)});
+        return error.LuaError;
     }
 
     const output = try tmpl.getOutput(l);
@@ -659,9 +666,8 @@ pub const LTemplate = struct {
 
         // call post processor
         if (c.lua_pcall(l, 1, 1, 0) != 0) {
-            // TODO: return this instead of logging
-            std.log.err("running post processor: {?s}", .{ffi.luaToString(l, -1)});
-            return error.PostProcessor;
+            try ffi.luaFmtString(l, "running post processor: {?s}", .{ffi.luaToString(l, -1)});
+            return error.LuaError;
         }
 
         const out = ffi.luaConvertString(l, -1);
