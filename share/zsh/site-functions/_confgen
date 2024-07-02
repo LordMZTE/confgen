@@ -15,7 +15,9 @@ _confgen() {
         '-e[Evaluate the given lua code before loading the confgenfile]:code:' \
         '--eval[Evaluate the given lua code before loading the confgenfile]:code:' \
         '-p[Evaluate the given lua code after loading the confgenfile]:code:' \
-        '--post-eval[Evaluate the given lua code after loading the confgenfile]:code:'
+        '--post-eval[Evaluate the given lua code after loading the confgenfile]:code:' \
+        '-w[Watch for changes of input files and re-generate them if changed]' \
+        '--watch[Watch for changes of input files and re-generate them if changed]'
 }
 
 _confgen "$@"

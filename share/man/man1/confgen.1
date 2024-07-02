@@ -9,6 +9,7 @@
 .RI [ OUTPATH ]
 .RI < --eval\ [CODE] >
 .RI < --post-eval\ [CODE] >
+.RI < --watch >
 .br
 .B confgen --compile
 .RI [ TEMPLATE_FILE ]
@@ -96,6 +97,14 @@ Evaluate the given
 .I lua code
 after loading the
 .IR confgenfile .
+
+.TP
+.B --watch
+Watch for changes on 
+.I input files
+and regenerate them when they're edited. If the 
+.I confgenfile
+is changed, the entire state will be re-loaded.
 
 .SH SEE ALSO
 .BR confgen (3),

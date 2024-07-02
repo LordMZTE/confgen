@@ -2,6 +2,8 @@ const std = @import("std");
 const args = @import("args");
 const libcg = @import("libcg");
 
+const Notifier = @import("Notifier.zig");
+
 comptime {
     if (@import("builtin").is_test) {
         std.testing.refAllDeclsRecursive(@This());
@@ -23,6 +25,7 @@ const Args = struct {
     help: bool = false,
     eval: ?[]const u8 = null,
     @"post-eval": ?[]const u8 = null,
+    watch: bool = false,
 
     pub const shorthands = .{
         .c = "compile",
@@ -31,6 +34,7 @@ const Args = struct {
         .h = "help",
         .e = "eval",
         .p = "post-eval",
+        .w = "watch",
     };
 };
 
@@ -42,9 +46,10 @@ const usage =
     \\    --compile, -c [TEMPLATE_FILE]        Compile a template to Lua instead of running. Useful for debugging.
     \\    --json-opt, -j [CONFGENFILE]         Write the given or all fields from cg.opt to stdout as JSON after running the given confgenfile instead of running.
     \\    --file, -f [TEMPLATE_FILE] [OUTFILE] Evaluate a single template and write the output instead of running.
-    \\    --eval, -e [CODE]                    Evaluate code before the confgenfile 
-    \\    --post-eval, -p [CODE]               Evaluate code after the confgenfile
-    \\    --help, -h                           Show this help
+    \\    --eval, -e [CODE]                    Evaluate code before the confgenfile .
+    \\    --post-eval, -p [CODE]               Evaluate code after the confgenfile.
+    \\    --watch, -w                          Watch for changes of input files and re-generate them if changed.
+    \\    --help, -h                           Show this help.
     \\
     \\Usage:
     \\    confgen [CONFGENFILE] [OUTPATH]      Generate configs according the the supplied configuration file.
@@ -177,24 +182,49 @@ pub fn run() !void {
         const l = try libcg.luaapi.initLuaState(&state);
         defer libcg.c.lua_close(l);
 
-        const tmplsrc = try std.fs.cwd().readFileAlloc(
-            alloc,
-            arg.positionals[0],
-            std.math.maxInt(usize),
-        );
-        const tmplcode = try libcg.luagen.generateLua(
-            alloc,
-            tmplsrc,
-            arg.positionals[0],
-        );
-        const genf = try libcg.luaapi.generate(l, tmplcode);
-        defer alloc.free(genf.content);
+        var content_buf = std.ArrayList(u8).init(alloc);
+        defer content_buf.deinit();
 
-        const outfile = try std.fs.cwd().createFile(arg.positionals[1], .{ .mode = genf.mode });
-        defer outfile.close();
-        try outfile.writeAll(genf.content);
+        const cgfile = libcg.luaapi.CgFile{
+            .content = .{ .path = arg.positionals[0] },
+            .copy = false,
+        };
+
+        try genfile(
+            alloc,
+            l,
+            cgfile,
+            &content_buf,
+            ".",
+            arg.positionals[1],
+        );
 
         libcg.luaapi.callOnDoneCallbacks(l, false);
+        if (arg.options.watch) {
+            var notif = try Notifier.init(alloc);
+            defer notif.deinit();
+
+            try notif.addDir(std.fs.path.dirname(arg.positionals[0]) orelse ".");
+
+            while (true) switch (try notif.next()) {
+                .quit => break,
+                .file_changed => |p| {
+                    defer alloc.free(p);
+                    if (!std.mem.eql(u8, p, arg.positionals[0])) continue;
+
+                    genfile(
+                        alloc,
+                        l,
+                        cgfile,
+                        &content_buf,
+                        ".",
+                        arg.positionals[1],
+                    ) catch |e| {
+                        std.log.err("generating {s}: {}", .{ arg.positionals[1], e });
+                    };
+                },
+            };
+        }
 
         return;
     }
@@ -228,7 +258,7 @@ pub fn run() !void {
 
     try std.posix.chdir(state.rootpath);
 
-    const l = try libcg.luaapi.initLuaState(&state);
+    var l = try libcg.luaapi.initLuaState(&state);
     defer libcg.c.lua_close(l);
 
     if (arg.options.eval) |code| {
@@ -244,31 +274,100 @@ pub fn run() !void {
     var content_buf = std.ArrayList(u8).init(alloc);
     defer content_buf.deinit();
 
-    var errors = false;
-    var iter = state.files.iterator();
-    while (iter.next()) |kv| {
-        const outpath = kv.key_ptr.*;
-        const file = kv.value_ptr.*;
+    {
+        var errors = false;
+        var iter = state.files.iterator();
+        while (iter.next()) |kv| {
+            const outpath = kv.key_ptr.*;
+            const file = kv.value_ptr.*;
 
-        if (file.copy) {
-            std.log.info("copying     {s}", .{outpath});
-        } else {
-            std.log.info("generating  {s}", .{outpath});
+            genfile(
+                alloc,
+                l,
+                file,
+                &content_buf,
+                output_abs,
+                outpath,
+            ) catch |e| {
+                errors = true;
+                std.log.err("generating {s}: {}", .{ outpath, e });
+            };
         }
-        genfile(
-            alloc,
-            l,
-            file,
-            &content_buf,
-            output_abs,
-            outpath,
-        ) catch |e| {
-            errors = true;
-            std.log.err("generating {s}: {}", .{ outpath, e });
-        };
+        libcg.luaapi.callOnDoneCallbacks(l, errors);
     }
 
-    libcg.luaapi.callOnDoneCallbacks(l, errors);
+    if (arg.options.watch) {
+        var notif = try Notifier.init(alloc);
+        defer notif.deinit();
+
+        {
+            try notif.addDir(std.fs.path.dirname(cgfile) orelse ".");
+
+            var iter = state.files.iterator();
+            while (iter.next()) |kv| {
+                try notif.addDir(std.fs.path.dirname(kv.key_ptr.*) orelse ".");
+            }
+        }
+
+        while (true) switch (try notif.next()) {
+            .quit => break,
+            .file_changed => |p| {
+                defer alloc.free(p);
+
+                if (std.mem.eql(u8, p, cgfile)) {
+                    std.log.info("Confgenfile changed; re-evaluating", .{});
+
+                    // Destroy Lua state
+                    libcg.c.lua_close(l);
+                    l = try libcg.luaapi.initLuaState(&state);
+
+                    // Reset CgState
+                    state.nfile_iters = 0; // old Lua state is dead, so no iterators.
+                    {
+                        var iter = state.files.iterator();
+                        while (iter.next()) |kv| {
+                            alloc.free(kv.key_ptr.*);
+                            kv.value_ptr.deinit(alloc);
+                        }
+                        state.files.clearRetainingCapacity();
+                    }
+
+                    // Evaluate cgfile and eval args
+                    if (arg.options.eval) |code| {
+                        try libcg.luaapi.evalUserCode(l, code);
+                    }
+
+                    try libcg.luaapi.loadCGFile(l, cgfile.ptr);
+
+                    if (arg.options.@"post-eval") |code| {
+                        try libcg.luaapi.evalUserCode(l, code);
+                    }
+
+                    continue;
+                }
+
+                // We need to iterate here because the key of the map corresponds to the file's
+                // output path. The input path may be entirely different.
+                var iter = state.files.iterator();
+                while (iter.next()) |kv| {
+                    if (kv.value_ptr.content != .path) continue;
+
+                    if (std.mem.eql(u8, kv.value_ptr.content.path, p)) {
+                        genfile(
+                            alloc,
+                            l,
+                            kv.value_ptr.*,
+                            &content_buf,
+                            output_abs,
+                            kv.key_ptr.*,
+                        ) catch |e| {
+                            std.log.err("generating {s}: {}", .{ p, e });
+                        };
+                    }
+                }
+            },
+        };
+    }
 }
 
 fn genfile(
@@ -280,6 +379,12 @@ fn genfile(
     file_outpath: []const u8,
 ) !void {
     const state = libcg.luaapi.getState(l);
+
+    if (file.copy) {
+        std.log.info("copying     {s}", .{file_outpath});
+    } else {
+        std.log.info("generating  {s}", .{file_outpath});
+    }
 
     if (file.copy) {
         const to_path = try std.fs.path.join(
@@ -321,7 +426,7 @@ fn genfile(
         .string => |s| content = s,
         .path => |p| {
             fname = std.fs.path.basename(p);
-            const path = try std.fs.path.join(alloc, &.{ state.rootpath, p });
+            const path = try std.fs.path.resolve(alloc, &.{ state.rootpath, p });
             defer alloc.free(path);
 
             const f = try std.fs.cwd().openFile(path, .{});

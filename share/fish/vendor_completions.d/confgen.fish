@@ -7,3 +7,4 @@ complete -c confgen -s j -l json-opt -d "Write the given or all fields from cg.o
 complete -c confgen -s f -l file -d "Evaluate a single template and write the output instead of running"
 complete -c confgen -s e -l eval -r -d "Evaluate the given lua code before loading the confgenfile"
 complete -c confgen -s p -l post-eval -r -d "Evaluate the given lua code after loading the confgenfile"
+complete -c confgen -s w -l watch -r -d "Watch for changes of input files and re-generate them if changed"

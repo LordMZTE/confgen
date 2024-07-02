@@ -1,10 +1,10 @@
 function __confgen_completion() {
 	if [ "${COMP_CWORD}" -eq 1 ]; then
-		COMPREPLY=($(compgen -A file -W "--compile -c --json-opt -j --help -h --file -f --eval -e --post-eval -p" -- "${COMP_WORDS[1]}"))
+		COMPREPLY=($(compgen -A file -W "--compile -c --json-opt -j --help -h --file -f --eval -e --post-eval -p --watch -w" -- "${COMP_WORDS[1]}"))
 	elif [ "${COMP_CWORD}" -eq 2 ]; then
 		case "${COMP_WORDS[1]}" in
 		"--help" | "-h") COMPREPLY=() ;;
-		"--compile" | "-c" | "--json-opt" | "-j" | "--file" | "-f")
+		"--compile" | "-c" | "--json-opt" | "-j" | "--file" | "-f" | "--watch" | "-w")
 			compopt -o default
 			COMPREPLY=()
 			;;
