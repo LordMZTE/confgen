@@ -66,6 +66,20 @@ pub fn main() u8 {
                 , .{usage});
             },
             error.Explained => {},
+            error.LuaError => {
+                // Once Zig is smart enough to remove LuaError from the error set here, we'll
+                // replace this branch with this compile-time check:
+                //comptime {
+                //    const ret_errors = @typeInfo(@typeInfo(@typeInfo(@TypeOf(run)).Fn.return_type.?).ErrorUnion.error_set).ErrorSet.?;
+                //    for (ret_errors) |err| {
+                //        if (std.mem.eql(u8, err.name, "LuaError"))
+                //            @compileError("Run function must never return a LuaError!");
+                //    }
+                //}
+
+                // We can't get the error message here as the Lua state will alread have been destroyed.
+                std.log.err("UNKNOWN LUA ERROR! THIS IS A BUG!", .{});
+            },
             else => {
                 std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
                 if (@errorReturnTrace()) |ert| std.debug.dumpStackTrace(ert.*);

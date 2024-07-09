@@ -189,12 +189,17 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
-
         return error.RunTemplate;
     }
 
     return .{
-        .content = try tmpl.getOutput(l),
+        .content = tmpl.getOutput(l) catch |e| switch (e) {
+            error.LuaError => {
+                std.log.err("failed to run post-processor: {?s}", .{ffi.luaToString(l, -1)});
+                return error.RunPostProcessor;
+            },
+            else => return e,
+        },
         .mode = tmpl.mode,
         .assume_deterministic = tmpl.assume_deterministic,
     };
@@ -626,7 +631,6 @@ pub const LTemplate = struct {
     /// caller owns return value.
     fn getOutput(self: *LTemplate, l: *c.lua_State) ![]const u8 {
         const top = c.lua_gettop(l);
-        defer c.lua_settop(l, top);
 
         c.lua_pushlightuserdata(l, self);
         c.lua_gettable(l, c.LUA_REGISTRYINDEX);
@@ -635,6 +639,7 @@ pub const LTemplate = struct {
 
         // check if there's no post processor
         if (c.lua_isnil(l, -1)) {
+            c.lua_settop(l, top);
             return try self.output.allocator.dupe(u8, self.output.items);
         }
 
@@ -643,11 +648,14 @@ pub const LTemplate = struct {
         // call post processor
         if (c.lua_pcall(l, 1, 1, 0) != 0) {
             try ffi.luaFmtString(l, "running post processor: {?s}", .{ffi.luaToString(l, -1)});
+            c.lua_insert(l, top + 1);
+            c.lua_settop(l, top + 1);
             return error.LuaError;
         }
 
         const out = ffi.luaConvertString(l, -1);
 
+        c.lua_settop(l, top);
         return try self.output.allocator.dupe(u8, out);
     }
 
