@@ -79,8 +79,9 @@ confgenfs /path/to/confgen.lua ~/confgenfs
 This mounts a FUSE3 filesystem containing all the config files. The advantage of this is that
 the templates will be generated when the file is opened and not ahead of time.
 
-Additionally, the filesystem will contain "meta-files" inside `_cgfs/`, currently only `_cgfs/eval`.
-You can write some Lua code to this file, and it will be evaluated in the global Lua context.
+Additionally, the filesystem will contain "meta-files" inside `_cgfs/`, currently only `_cgfs/eval`
+and `_cgfs/opts.json`.
+You can write some Lua code to the former file, and it will be evaluated in the global Lua context.
 This allows for dynamic configurations, here's a practical example:
 
 `.config/waybar/config.cgt`:
