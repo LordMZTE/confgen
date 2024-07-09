@@ -2,7 +2,7 @@ const std = @import("std");
 pub const c = ffi.c;
 
 pub const ffi = @import("ffi.zig");
-pub const json = @import("json.zig");
+pub const format = @import("format.zig");
 pub const luaapi = @import("luaapi.zig");
 pub const luagen = @import("luagen.zig");
 

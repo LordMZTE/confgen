@@ -144,14 +144,14 @@ pub fn run() !void {
         libcg.c.lua_getfield(l, -1, "opt");
 
         if (arg.positionals.len == 0) {
-            try libcg.json.luaToJSON(l, &wstream);
+            try libcg.format.formats.json.luaToJSON(l, &wstream);
             libcg.c.lua_pop(l, 1);
         } else {
             try wstream.beginObject();
             for (arg.positionals) |opt| {
                 try wstream.objectField(opt);
                 libcg.c.lua_getfield(l, -1, opt);
-                try libcg.json.luaToJSON(l, &wstream);
+                try libcg.format.formats.json.luaToJSON(l, &wstream);
             }
             libcg.c.lua_pop(l, 2);
             try wstream.endObject();

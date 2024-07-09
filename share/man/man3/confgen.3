@@ -133,7 +133,7 @@ Example:
 .B cg.onDone(function(errors) print(\(dqHad errors: \(dq .. tostring(errors)) end)
 
 .TP
-.B cg.toJSON(value[, pretty])
+.B cg.fmt.json.serialize(value[, pretty])
 Convert an arbitrary lua value to JSON and return that as a string. The JSON will be minified by
 default unless
 .IR pretty \ is \ true .
@@ -144,7 +144,7 @@ will be serialized as
 .IR null .
 
 Example:
-.B local json = cg.toJSON({ x = \(dqy\(dq }) -- '{\(dqx\(dq: \(dqy\(dq}'
+.B local json = cg.fmt.json.serialize({ x = \(dqy\(dq }) -- '{\(dqx\(dq: \(dqy\(dq}'
 
 .TP
 .B cg.fileIter()

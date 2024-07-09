@@ -575,7 +575,7 @@ fn generateOptsJSON(self: *FileSystem) ![]const u8 {
     libcg.c.lua_getglobal(self.l, "cg");
     libcg.c.lua_getfield(self.l, -1, "opt");
 
-    try libcg.json.luaToJSON(self.l, &wstream);
+    try libcg.format.formats.json.luaToJSON(self.l, &wstream);
 
     return try buf.toOwnedSlice();
 }

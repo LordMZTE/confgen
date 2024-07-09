@@ -1,8 +1,16 @@
 //! Tools for serialization of Lua values to JSON
 //! Used by the --json-opt flag
 const std = @import("std");
-const ffi = @import("ffi.zig");
+const ffi = @import("../ffi.zig");
 const c = ffi.c;
+
+const luaapi = @import("../luaapi.zig");
+
+pub fn luaPush(l: *c.lua_State) void {
+    c.lua_createtable(l, 0, 1);
+    c.lua_pushcfunction(l, ffi.luaFunc(lSerialize));
+    c.lua_setfield(l, -2, "serialize");
+}
 
 /// Writes a lua object to the stream. stream must be a json.WriteStream
 pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
@@ -70,4 +78,30 @@ pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
         },
         else => unreachable,
     }
+}
+
+fn lSerialize(l: *c.lua_State) !c_int {
+    c.luaL_checkany(l, 1);
+    const pretty = if (c.lua_gettop(l) >= 2) c.lua_toboolean(l, 2) != 0 else false;
+
+    const state = luaapi.getState(l);
+
+    // If you're doing more than 16KiB of JSON, open an issue
+    // and bring a VERY good explanation with you :D
+    var buf: [1024 * 16]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    var wstream = std.json.WriteStream(@TypeOf(fbs.writer()), .assumed_correct).init(
+        state.files.allocator,
+        fbs.writer(),
+        .{ .whitespace = if (pretty) .indent_2 else .minified },
+    );
+    defer wstream.deinit();
+
+    c.lua_pushvalue(l, 1);
+    try @import("json.zig").luaToJSON(l, &wstream);
+
+    const written = fbs.getWritten();
+    c.lua_pushlstring(l, written.ptr, written.len);
+    return 1;
 }
