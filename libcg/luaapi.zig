@@ -426,7 +426,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     const output = try tmpl.getOutput(l);
     defer state.files.allocator.free(output);
 
-    c.lua_pushlstring(l, output.ptr, output.len);
+    ffi.luaPushString(l, output);
     return 1;
 }
 
@@ -746,6 +746,49 @@ pub const LTemplate = struct {
         return 0;
     }
 
+    fn lSubtmpl(l: *c.lua_State) !c_int {
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
+        c.luaL_checktype(l, 2, c.LUA_TFUNCTION);
+
+        // Push passed-in function
+        c.lua_pushvalue(l, 2);
+
+        // We do not create a custom fenv here, as the caller fenv is fine.
+        const tmpl = (try init(self.output.allocator)).push(l);
+
+        // This is not a pcall because this already runs in a protected environment, and any errors
+        // here should be propagated. There are also no defers here this would unwind past.
+        c.lua_call(l, 1, 0);
+
+        const output = try tmpl.getOutput(l);
+        defer self.output.allocator.free(output);
+
+        ffi.luaPushString(l, output);
+        return 1;
+    }
+
+    fn lPushSubtmpl(l: *c.lua_State) !c_int {
+        // TODO: deduplicate
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
+        c.luaL_checktype(l, 2, c.LUA_TFUNCTION);
+
+        // Push passed-in function
+        c.lua_pushvalue(l, 2);
+
+        // We do not create a custom fenv here, as the caller fenv is fine.
+        const tmpl = (try init(self.output.allocator)).push(l);
+
+        // This is not a pcall because this already runs in a protected environment, and any errors
+        // here should be propagated. There are also no defers here this would unwind past.
+        c.lua_call(l, 1, 0);
+
+        const output = try tmpl.getOutput(l);
+        defer self.output.allocator.free(output);
+
+        try self.output.appendSlice(output);
+        return 0;
+    }
+
     fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, lua_registry_key);
 
@@ -766,6 +809,12 @@ pub const LTemplate = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lSetAssumeDeterministic));
         c.lua_setfield(l, -2, "setAssumeDeterministic");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lSubtmpl));
+        c.lua_setfield(l, -2, "subtmpl");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lPushSubtmpl));
+        c.lua_setfield(l, -2, "pushSubtmpl");
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");

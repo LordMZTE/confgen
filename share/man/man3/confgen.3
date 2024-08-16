@@ -248,12 +248,41 @@ Example:
 Tell
 .I ConfgenFS
 that this template does not change when repeatedly evaluated. This causes
-.I ConfgenFS to report the size of the file's last evaluation when
+.I ConfgenFS
+to report the size of the file's last evaluation when
 .I fstat
 is invoked.
 
 Example:
 .B tmpl:setAssumeDeterministic(true) -- File does not change; ConfgenFS reports size
+
+.TP
+.B tmpl:subtmpl(func)
+Call the passed-in function with a new
+.I Template
+object and return the output.
+
+This is useful in cases where a section of the template should be processed differently than the rest, for example using a custom post-processor.
+The passed-in function
+.B must
+take an argument called
+.BR tmpl .
+Other variable names are usually not handled correctly here!
+
+Example:
+.B <! local output = tmpl:subtmpl(function(tmpl) !> ... <! end) !>
+
+.TP
+.B tmpl:pushSubtmpl(func)
+Like
+.IR subtmpl ,
+but the output of the subtemplate is pushed to this template rather than returned.
+This is useful if all special processing for the given template is done by a
+.I post-processor
+rather than the caller code.
+
+Example:
+.B <! tmpl:pushSubtmpl(function(tmpl) !> ... <! end) !>
 
 .SH SEE ALSO
 .BR confgen (1),
