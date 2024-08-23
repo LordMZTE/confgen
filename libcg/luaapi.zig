@@ -185,7 +185,15 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
-    _ = c.lua_setfenv(l, -2);
+    // Here, we duplicate the whole fenv table since setfenv will pop one copy from the stack.
+    // This is to prevent the garbage collector from destroying the LTemplate object while the
+    // post-processor is running, ultimately causing a segfault due to a use-after-free.
+    //
+    // Yes, that one was indeed fun to debug.
+    // TODO: make sure this doesn't happen anywhere else (it probably does)
+    c.lua_pushvalue(l, -1);
+    _ = c.lua_setfenv(l, -3);
+    c.lua_insert(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});
@@ -652,10 +660,10 @@ pub const LTemplate = struct {
             c.lua_settop(l, top + 1);
             return error.LuaError;
         }
+        defer c.lua_settop(l, top);
 
         const out = ffi.luaConvertString(l, -1);
 
-        c.lua_settop(l, top);
         return try self.output.allocator.dupe(u8, out);
     }
 
