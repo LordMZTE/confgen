@@ -68,25 +68,30 @@ pub inline fn luaPushString(l: *c.lua_State, s: []const u8) void {
     c.lua_pushlstring(l, s.ptr, s.len);
 }
 
-const StackWriter = struct {
+pub const StackWriter = struct {
     l: *c.lua_State,
     written: u31 = 0,
 
     const Writer = std.io.Writer(*StackWriter, error{}, write);
 
-    fn write(self: *StackWriter, bytes: []const u8) error{}!usize {
+    pub fn write(self: *StackWriter, bytes: []const u8) error{}!usize {
         luaPushString(self.l, bytes);
         self.written += 1;
         return bytes.len;
     }
 
-    fn writer(self: *StackWriter) Writer {
+    pub fn writer(self: *StackWriter) Writer {
         return .{ .context = self };
+    }
+
+    pub fn concat(self: *StackWriter) void {
+        c.lua_concat(self.l, self.written);
+        self.written = 0;
     }
 };
 
 pub fn luaFmtString(l: *c.lua_State, comptime fmt: []const u8, args: anytype) !void {
     var ctx = StackWriter{ .l = l };
     try std.fmt.format(ctx.writer(), fmt, args);
-    c.lua_concat(l, ctx.written);
+    ctx.concat();
 }

@@ -109,6 +109,8 @@ pub fn run() !void {
         return;
     }
 
+    const ttyconf = std.io.tty.detectConfig(std.io.getStdErr());
+
     if (arg.options.compile) |filepath| {
         if (arg.positionals.len != 0) {
             std.log.err("Expected 0 positional arguments, got {}.", .{arg.positionals.len});
@@ -119,8 +121,21 @@ pub fn run() !void {
         defer file.close();
 
         const content = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
-        const tmpl = try libcg.luagen.generateLua(alloc, content, filepath);
+        var errors: std.zig.ErrorBundle.Wip = undefined;
+        try errors.init(alloc);
+        const tmpl = libcg.luagen.generateLua(alloc, &errors, content, filepath) catch |e| switch (e) {
+            error.Reported => {
+                var owned = try errors.toOwnedBundle("");
+                defer owned.deinit(alloc);
+
+                std.log.err("parsing template:", .{});
+                owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                return error.Explained;
+            },
+            else => return e,
+        };
         defer tmpl.deinit();
+        errors.deinit();
 
         try std.io.getStdOut().writeAll(tmpl.content);
 
@@ -204,14 +219,27 @@ pub fn run() !void {
             .copy = false,
         };
 
-        try genfile(
+        var errors: std.zig.ErrorBundle.Wip = undefined;
+        try errors.init(alloc);
+        genfile(
             alloc,
             l,
+            &errors,
             cgfile,
             &content_buf,
             ".",
             arg.positionals[1],
-        );
+        ) catch |e| switch (e) {
+            error.Reported => {
+                var bundle = try errors.toOwnedBundle("");
+                defer bundle.deinit(alloc);
+
+                std.log.err("reported errors:", .{});
+                bundle.renderToStdErr(.{ .ttyconf = ttyconf });
+            },
+            else => return e,
+        };
+        errors.deinit();
 
         libcg.luaapi.callOnDoneCallbacks(l, false);
         if (arg.options.watch) {
@@ -226,16 +254,26 @@ pub fn run() !void {
                     defer alloc.free(p);
                     if (!std.mem.eql(u8, p, arg.positionals[0])) continue;
 
+                    var errorb: std.zig.ErrorBundle.Wip = undefined;
+                    try errorb.init(alloc);
                     genfile(
                         alloc,
                         l,
+                        &errorb,
                         cgfile,
                         &content_buf,
                         ".",
                         arg.positionals[1],
                     ) catch |e| {
+                        if (e == error.Reported) {
+                            var owned = try errorb.toOwnedBundle("");
+                            defer owned.deinit(alloc);
+
+                            owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                        }
                         std.log.err("generating {s}: {}", .{ arg.positionals[1], e });
                     };
+                    errorb.deinit();
                 },
             };
         }
@@ -290,6 +328,8 @@ pub fn run() !void {
 
     {
         var errors = false;
+        var errorb: std.zig.ErrorBundle.Wip = undefined;
+        try errorb.init(alloc);
         var iter = state.files.iterator();
         while (iter.next()) |kv| {
             const outpath = kv.key_ptr.*;
@@ -298,6 +338,7 @@ pub fn run() !void {
             genfile(
                 alloc,
                 l,
+                &errorb,
                 file,
                 &content_buf,
                 output_abs,
@@ -307,6 +348,15 @@ pub fn run() !void {
                 std.log.err("generating {s}: {}", .{ outpath, e });
             };
         }
+
+        var errorbo = try errorb.toOwnedBundle("");
+        defer errorbo.deinit(alloc);
+
+        if (errorbo.extra.len != 0) {
+            std.log.err("reported errors:", .{});
+            errorbo.renderToStdErr(.{ .ttyconf = ttyconf });
+        }
+
         libcg.luaapi.callOnDoneCallbacks(l, errors);
     }
 
@@ -367,16 +417,27 @@ pub fn run() !void {
                     if (kv.value_ptr.content != .path) continue;
 
                     if (std.mem.eql(u8, kv.value_ptr.content.path, p)) {
+                        var errors: std.zig.ErrorBundle.Wip = undefined;
+                        try errors.init(alloc);
                         genfile(
                             alloc,
                             l,
+                            &errors,
                             kv.value_ptr.*,
                             &content_buf,
                             output_abs,
                             kv.key_ptr.*,
                         ) catch |e| {
+                            if (e == error.Reported) {
+                                var owned = try errors.toOwnedBundle("");
+                                defer owned.deinit(alloc);
+
+                                std.log.err("reported errors:", .{});
+                                owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                            }
                             std.log.err("generating {s}: {}", .{ p, e });
                         };
+                        errors.deinit();
                     }
                 }
             },
@@ -387,6 +448,7 @@ pub fn run() !void {
 fn genfile(
     alloc: std.mem.Allocator,
     l: *libcg.c.lua_State,
+    errors: *std.zig.ErrorBundle.Wip,
     file: libcg.luaapi.CgFile,
     content_buf: *std.ArrayList(u8),
     outpath_root: []const u8,
@@ -454,7 +516,12 @@ fn genfile(
 
     const out = gen: {
         const content_alloc = try alloc.dupe(u8, content);
-        const tmpl = try libcg.luagen.generateLua(alloc, content_alloc, fname orelse file_outpath);
+        const tmpl = try libcg.luagen.generateLua(
+            alloc,
+            errors,
+            content_alloc,
+            fname orelse file_outpath,
+        );
         break :gen try libcg.luaapi.generate(l, tmpl);
     };
     defer alloc.free(out.content);

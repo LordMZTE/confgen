@@ -335,6 +335,7 @@ const FileHandle = union(enum) {
 alloc: std.mem.Allocator,
 cg_state: *libcg.luaapi.CgState,
 l: *libcg.c.lua_State,
+ttyconf: std.io.tty.Config,
 
 /// A buffer used for temporary storage during file generation. It is re-used.
 genbuf: std.ArrayList(u8),
@@ -381,6 +382,7 @@ fn init(init_data: InitData) !FileSystem {
         .alloc = init_data.alloc,
         .cg_state = cg_state,
         .l = l,
+        .ttyconf = std.io.tty.detectConfig(std.io.getStdErr()),
         .genbuf = std.ArrayList(u8).init(init_data.alloc),
         .directory_cache = Cache(void).init(init_data.alloc),
         .meta_cache = Cache(FileMeta).init(init_data.alloc),
@@ -543,7 +545,25 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: [:0]const u
 
     std.log.info("generating {s}", .{name});
     const src_alloc = try self.alloc.dupe(u8, content);
-    const tmpl = try libcg.luagen.generateLua(self.alloc, src_alloc, name);
+    var errors: std.zig.ErrorBundle.Wip = undefined;
+    try errors.init(self.alloc);
+    const tmpl = libcg.luagen.generateLua(
+        self.alloc,
+        &errors,
+        src_alloc,
+        name,
+    ) catch |e| switch (e) {
+        error.Reported => {
+            var owned = try errors.toOwnedBundle("");
+            defer owned.deinit(self.alloc);
+
+            std.log.err("parsing template:", .{});
+            owned.renderToStdErr(.{ .ttyconf = self.ttyconf });
+            return error.Reported;
+        },
+        else => return e,
+    };
+    errors.deinit();
     const genfile = try libcg.luaapi.generate(self.l, tmpl);
 
     const meta = FileMeta{

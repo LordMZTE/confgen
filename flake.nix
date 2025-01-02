@@ -15,7 +15,7 @@
       pkgs = import nixpkgs { inherit system; };
       deps = pkgs.callPackage ./deps.nix { };
     in
-    {
+    rec {
       packages.default = pkgs.stdenv.mkDerivation {
         name = "confgen";
         src = ./.;
@@ -25,8 +25,6 @@
         nativeBuildInputs = with pkgs; [
           zig_0_13.hook
           pkg-config
-          luajit
-          fuse3
         ];
 
         buildInputs = with pkgs; [
@@ -37,6 +35,10 @@
         postPatch = ''
           ln -sf "${deps}" "$ZIG_GLOBAL_CACHE_DIR/p"
         '';
+      };
+
+      devShells.default = pkgs.mkShell {
+        buildInputs = packages.default.buildInputs ++ (with pkgs; [ pkg-config ]);
       };
     });
 }

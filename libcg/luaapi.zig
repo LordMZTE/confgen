@@ -6,6 +6,7 @@ const format = @import("format.zig");
 const luagen = @import("luagen.zig");
 
 const TemplateCode = luagen.TemplateCode;
+const Parser = @import("Parser.zig");
 
 pub const state_key = "cg_state";
 pub const on_done_callbacks_key = "on_done_callbacks";
@@ -392,10 +393,24 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
     {
         const src_alloc = try state.files.allocator.dupe(u8, source);
-        const tmpl_code = try luagen.generateLua(state.files.allocator, src_alloc, source_name);
+        var errors: std.zig.ErrorBundle.Wip = undefined;
+        try errors.init(state.files.allocator);
+        const tmpl_code = luagen.generateLua(
+            state.files.allocator,
+            &errors,
+            src_alloc,
+            source_name,
+        ) catch |e| return processTmplLoadErr(
+            l,
+            state.files.allocator,
+            try errors.toOwnedBundle(""),
+            e,
+        );
 
         // At the end of the block, we push tmpl_code onto the lua stack.
         errdefer tmpl_code.deinit();
+
+        errors.deinit();
 
         if (c.luaL_loadbuffer(
             l,
@@ -461,9 +476,27 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
     }
 
     {
-        const file_content = try std.fs.cwd().readFileAlloc(state.files.allocator, inpath, std.math.maxInt(usize));
-        const tmpl_code = try luagen.generateLua(state.files.allocator, file_content, inpath);
+        const file_content = try std.fs.cwd().readFileAlloc(
+            state.files.allocator,
+            inpath,
+            std.math.maxInt(usize),
+        );
+        var errors: std.zig.ErrorBundle.Wip = undefined;
+        try errors.init(state.files.allocator);
+        const tmpl_code = luagen.generateLua(
+            state.files.allocator,
+            &errors,
+            file_content,
+            inpath,
+        ) catch |e| return processTmplLoadErr(
+            l,
+            state.files.allocator,
+            try errors.toOwnedBundle(""),
+            e,
+        );
         errdefer tmpl_code.deinit();
+
+        errors.deinit();
 
         if (c.luaL_loadbuffer(
             l,
@@ -503,6 +536,29 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
 
     c.lua_pushlstring(l, output.ptr, output.len);
     return 1;
+}
+
+fn processTmplLoadErr(
+    l: *c.lua_State,
+    alloc: std.mem.Allocator,
+    errors_c: std.zig.ErrorBundle,
+    err: Parser.Error,
+) anyerror {
+    var errors = errors_c;
+    defer errors.deinit(alloc);
+    switch (err) {
+        error.Reported => {
+            var writer = ffi.StackWriter{ .l = l };
+            _ = try writer.write("parsing template:\n");
+            try errors.renderToWriter(.{ .ttyconf = .no_color }, writer.writer());
+
+            writer.concat();
+            return error.LuaError;
+        },
+        else => {
+            return err;
+        },
+    }
 }
 
 fn lOnDone(l: *c.lua_State) !c_int {

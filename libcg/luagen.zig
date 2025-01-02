@@ -47,7 +47,12 @@ pub const TemplateCode = struct {
 
 /// Generates a lua script that allows getting the output from a given parser.
 /// `src` must be allocated with `alloc`, ownership is transferred.
-pub fn generateLua(alloc: std.mem.Allocator, src: []const u8, name: []const u8) !TemplateCode {
+pub fn generateLua(
+    alloc: std.mem.Allocator,
+    errors: *std.zig.ErrorBundle.Wip,
+    src: []const u8,
+    name: []const u8,
+) Parser.Error!TemplateCode {
     errdefer alloc.free(src);
 
     var outbuf = std.ArrayList(u8).init(alloc);
@@ -55,7 +60,11 @@ pub fn generateLua(alloc: std.mem.Allocator, src: []const u8, name: []const u8) 
     var literals = std.ArrayList([]const u8).init(alloc);
     errdefer literals.deinit();
 
-    var parser = Parser{ .str = src, .pos = 0 };
+    var parser = Parser{
+        .str = src,
+        .srcname = name,
+        .errors = errors,
+    };
 
     while (try parser.next()) |token| {
         switch (token.token_type) {
