@@ -28,8 +28,7 @@ jobs:
 
       - name: Install & Push to Attic
         run: |
-          # Cached in MZTE cache
-          nix profile install github:zhaofengli/attic
+          nix profile install nixpkgs#attic-client
 
           attic login mzte https://nix.mzte.de ${{ secrets.ATTIC_TOKEN }}
           attic push mzte result
