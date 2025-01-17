@@ -60,6 +60,29 @@ in JSON format, similar to
 .IR confgen 's \ --json-opt
 parameter.
 
+.SS THE FILESYSTEM CONTEXT
+When evaluated under
+.BR ConfgenFS ,
+templates will have an additional
+.I fsctx
+variable available. Note that this will not always be present. Notably, ConfgenFS evaluates files to
+generate metadata without a processing attempting to read the file sometimes. Templates must handle
+this being nil.
+
+This is a table containing the following fields:
+.TP
+.B fsctx.pid
+The process ID of the process reading the file. This could be combined with the procfs to get
+command line flags passed to the reader, for example.
+
+.TP
+.BR fsctx.uid , fsctx.gid
+The UID and GID of the user reading the file.
+
+.TP
+.BR fsctx.umask
+The umask of the reader process.
+
 .SH OPTIONS
 .TP
 .B --help

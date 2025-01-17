@@ -151,9 +151,18 @@ pub fn getState(l: *c.lua_State) *CgState {
 
 /// Ownership of `code` is transferred to this function!
 pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
+    c.lua_newtable(l);
+    LTemplate.createTmplEnv(l);
+    return generateWithEnv(l, code);
+}
+
+/// Ownership of `code` is transferred to this function!
+/// Expects the environment table for the template on top of the Lua stack.
+/// opt, tmpl and tmplcode will be added to this table, and it will be popped from the stack.
+pub fn generateWithEnv(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const state = getState(l);
 
-    const prevtop = c.lua_gettop(l);
+    const prevtop = c.lua_gettop(l) - 1; // Sub 1 for env table
     defer c.lua_settop(l, prevtop);
 
     {
@@ -168,8 +177,13 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
         }
 
         // env table
-        c.lua_newtable(l);
-        LTemplate.createTmplEnv(l);
+        // Here, we duplicate the whole fenv table since setfenv will pop one copy from the stack.
+        // This is to prevent the garbage collector from destroying the LTemplate object while the
+        // post-processor is running, ultimately causing a segfault due to a use-after-free.
+        //
+        // Yes, that one was indeed fun to debug.
+        // TODO: make sure this doesn't happen anywhere else (it probably does)
+        c.lua_pushvalue(l, prevtop + 1);
 
         // add opt
         c.lua_getglobal(l, "cg");
@@ -186,15 +200,7 @@ pub fn generate(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
-    // Here, we duplicate the whole fenv table since setfenv will pop one copy from the stack.
-    // This is to prevent the garbage collector from destroying the LTemplate object while the
-    // post-processor is running, ultimately causing a segfault due to a use-after-free.
-    //
-    // Yes, that one was indeed fun to debug.
-    // TODO: make sure this doesn't happen anywhere else (it probably does)
-    c.lua_pushvalue(l, -1);
-    _ = c.lua_setfenv(l, -3);
-    c.lua_insert(l, -2);
+    _ = c.lua_setfenv(l, -2);
 
     if (c.lua_pcall(l, 0, 0, 0) != 0) {
         std.log.err("failed to run template: {?s}", .{ffi.luaToString(l, -1)});

@@ -64,8 +64,9 @@ const fuse_op_impl = struct {
     }
 
     pub fn open(path_p: ?[*:0]const u8, fi_r: ?*c.fuse_file_info) callconv(.C) c_int {
+        const fuse_ctx = c.fuse_get_context().*;
         const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r.?));
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fs: *FileSystem = @alignCast(@ptrCast(fuse_ctx.private_data));
         const path = trimPath(path_p.?);
 
         const handle_idx = for (fs.handles, 0..) |h, i| {
@@ -95,7 +96,7 @@ const fuse_op_impl = struct {
 
             const cgfile = fs.cg_state.files.get(path) orelse return errnoRet(.NOENT);
 
-            const content = fs.generateCGFile(cgfile, path) catch |e| {
+            const content = fs.generateCGFile(cgfile, path, fuse_ctx) catch |e| {
                 std.log.err("generating '{s}': {}", .{ path, e });
                 return errnoRet(.PERM);
             };
@@ -490,7 +491,7 @@ fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) 
             return meta;
         } else {
             // generateCGFile populates the meta cache for generated files
-            const gen = try self.generateCGFile(cgf, path);
+            const gen = try self.generateCGFile(cgf, path, null);
             defer self.alloc.free(gen.content);
 
             return self.meta_cache.get(path) orelse blk: {
@@ -514,7 +515,12 @@ fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void 
     }
 }
 
-fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: [:0]const u8) !libcg.luaapi.GeneratedFile {
+fn generateCGFile(
+    self: *FileSystem,
+    cgf: libcg.luaapi.CgFile,
+    name: [:0]const u8,
+    maybe_fsctx: ?c.fuse_context,
+) !libcg.luaapi.GeneratedFile {
     var content: []const u8 = undefined;
     var copy_mode: u24 = 0o644;
     switch (cgf.content) {
@@ -564,7 +570,27 @@ fn generateCGFile(self: *FileSystem, cgf: libcg.luaapi.CgFile, name: [:0]const u
         else => return e,
     };
     errors.deinit();
-    const genfile = try libcg.luaapi.generate(self.l, tmpl);
+
+    libcg.c.lua_newtable(self.l);
+    libcg.luaapi.LTemplate.createTmplEnv(self.l);
+    if (maybe_fsctx) |fsctx| {
+        libcg.c.lua_createtable(self.l, 0, 3);
+
+        libcg.c.lua_pushinteger(self.l, fsctx.pid);
+        libcg.c.lua_setfield(self.l, -2, "pid");
+
+        libcg.c.lua_pushinteger(self.l, fsctx.uid);
+        libcg.c.lua_setfield(self.l, -2, "uid");
+
+        libcg.c.lua_pushinteger(self.l, fsctx.gid);
+        libcg.c.lua_setfield(self.l, -2, "gid");
+
+        libcg.c.lua_pushinteger(self.l, fsctx.umask);
+        libcg.c.lua_setfield(self.l, -2, "umask");
+
+        libcg.c.lua_setfield(self.l, -2, "fsctx");
+    }
+    const genfile = try libcg.luaapi.generateWithEnv(self.l, tmpl);
 
     const meta = FileMeta{
         .mode = genfile.mode,
