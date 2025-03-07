@@ -284,13 +284,24 @@ test "lua literal" {
         \\bla
     ;
 
-    var parser = Parser{ .str = input, .pos = 0 };
+    var errors: std.zig.ErrorBundle.Wip = undefined;
+    try errors.init(std.testing.allocator);
+    defer errors.deinit();
+
+    var parser = Parser{
+        .str = input,
+        .srcname = "test",
+        .errors = &errors,
+        .pos = 0,
+    };
 
     try std.testing.expectEqual(TokenType.text, (try parser.next()).?.token_type);
     try std.testing.expectEqual(TokenType.lua_literal, (try parser.next()).?.token_type);
     try std.testing.expectEqual(TokenType.text, (try parser.next()).?.token_type);
 
     try std.testing.expectEqual(@as(?Token, null), try parser.next());
+
+    try std.testing.expectEqual(0, errors.tmpBundle().errorMessageCount());
 }
 
 test "lua" {
@@ -300,11 +311,22 @@ test "lua" {
         \\bla
     ;
 
-    var parser = Parser{ .str = input, .pos = 0 };
+    var errors: std.zig.ErrorBundle.Wip = undefined;
+    try errors.init(std.testing.allocator);
+    defer errors.deinit();
+
+    var parser = Parser{
+        .str = input,
+        .srcname = "test",
+        .errors = &errors,
+        .pos = 0,
+    };
 
     try std.testing.expectEqual(TokenType.text, (try parser.next()).?.token_type);
     try std.testing.expectEqual(TokenType.lua, (try parser.next()).?.token_type);
     try std.testing.expectEqual(TokenType.text, (try parser.next()).?.token_type);
 
     try std.testing.expectEqual(@as(?Token, null), try parser.next());
+
+    try std.testing.expectEqual(0, errors.tmpBundle().errorMessageCount());
 }

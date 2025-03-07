@@ -7,9 +7,9 @@ pub const formats = struct {
 };
 
 pub fn pushFmtTable(l: *c.lua_State) void {
-    c.lua_createtable(l, 0, @typeInfo(formats).Struct.decls.len);
+    c.lua_createtable(l, 0, @typeInfo(formats).@"struct".decls.len);
 
-    inline for (@typeInfo(formats).Struct.decls) |decl| {
+    inline for (@typeInfo(formats).@"struct".decls) |decl| {
         @field(formats, decl.name).luaPush(l);
         c.lua_setfield(l, -2, decl.name);
     }

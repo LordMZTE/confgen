@@ -8,7 +8,7 @@ const FileSystem = @This();
 
 pub const fuse_ops = ops: {
     var ops = std.mem.zeroes(c.fuse_operations);
-    for (@typeInfo(fuse_op_impl).Struct.decls) |decl| {
+    for (@typeInfo(fuse_op_impl).@"struct".decls) |decl| {
         @field(ops, decl.name) = @field(fuse_op_impl, decl.name);
     }
     break :ops ops;
@@ -274,7 +274,7 @@ const fuse_op_impl = struct {
         inline for (.{ fs.directory_cache, fs.cg_state.files }) |map| {
             var iter = map.keyIterator();
             while (iter.next()) |k| {
-                var k_z_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var k_z_buf: [std.fs.max_path_bytes]u8 = undefined;
                 const k_z = std.fmt.bufPrintZ(&k_z_buf, "{s}", .{k.*}) catch
                     return errnoRet(.NOMEM);
 
@@ -417,7 +417,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
         var dir = file.*;
         while (std.fs.path.dirname(dir)) |dirname| {
             dir = dirname;
-            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
             @memcpy(buf[0..dirname.len], dirname);
             // I don't like this line.
             // Deal with it once it's a problem.

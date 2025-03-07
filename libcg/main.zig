@@ -8,6 +8,10 @@ pub const luagen = @import("luagen.zig");
 
 pub const Parser = @import("Parser.zig");
 
+test {
+    std.testing.refAllDecls(@This());
+}
+
 var stderr_isatty: ?bool = null;
 
 pub fn logFn(

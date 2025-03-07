@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const confgenfs = b.option(
+    const enable_confgenfs = b.option(
         bool,
         "confgenfs",
         "Build and install confgenfs",
@@ -18,23 +18,30 @@ pub fn build(b: *std.Build) void {
     const libcg = b.createModule(.{
         .root_source_file = b.path("libcg/main.zig"),
         .link_libc = true,
+        // required for luajit errors
+        .unwind_tables = .@"async",
         .target = target,
         .optimize = optimize,
     });
 
-    // required for luajit errors
-    libcg.unwind_tables = true;
     libcg.linkSystemLibrary("luajit", .{});
 
-    const confgen_exe = b.addExecutable(.{
-        .name = "confgen",
+    const libcg_test = b.addTest(.{ .root_module = libcg });
+
+    const confgen = b.addModule("confgen", .{
         .root_source_file = b.path("confgen/main.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "args", .module = zig_args },
+            .{ .name = "libcg", .module = libcg },
+        },
     });
 
-    confgen_exe.root_module.addImport("args", zig_args);
-    confgen_exe.root_module.addImport("libcg", libcg);
+    const confgen_exe = b.addExecutable(.{
+        .name = "confgen",
+        .root_module = confgen,
+    });
 
     b.installArtifact(confgen_exe);
 
@@ -53,28 +60,29 @@ pub fn build(b: *std.Build) void {
     const run_confgen_step = b.step("run-confgen", "Run the confgen binary");
     run_confgen_step.dependOn(&run_confgen_cmd.step);
 
-    const exe_confgen_tests = b.addTest(.{
-        .root_source_file = b.path("confgen/main.zig"),
-        .link_libc = true,
-        .target = target,
-        .optimize = optimize,
-    });
-    exe_confgen_tests.root_module.addImport("args", zig_args);
-    exe_confgen_tests.root_module.addImport("libcg", libcg);
+    const confgen_test = b.addTest(.{ .root_module = confgen });
 
-    if (confgenfs) {
-        const confgenfs_exe = b.addExecutable(.{
-            .name = "confgenfs",
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&b.addRunArtifact(libcg_test).step);
+    test_step.dependOn(&b.addRunArtifact(confgen_test).step);
+
+    if (enable_confgenfs) {
+        const confgenfs = b.addModule("confgenfs", .{
             .root_source_file = b.path("confgenfs/main.zig"),
             .link_libc = true,
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "args", .module = zig_args },
+                .{ .name = "libcg", .module = libcg },
+            },
         });
+        confgenfs.linkSystemLibrary("fuse3", .{});
 
-        confgenfs_exe.root_module.addImport("args", zig_args);
-        confgenfs_exe.root_module.addImport("libcg", libcg);
-
-        confgenfs_exe.linkSystemLibrary("fuse3");
+        const confgenfs_exe = b.addExecutable(.{
+            .name = "confgenfs",
+            .root_module = confgenfs,
+        });
 
         b.installArtifact(confgenfs_exe);
 
@@ -86,8 +94,8 @@ pub fn build(b: *std.Build) void {
 
         const run_confgenfs_step = b.step("run-confgenfs", "Run the confgenfs binary");
         run_confgenfs_step.dependOn(&run_confgenfs_cmd.step);
-    }
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&b.addRunArtifact(exe_confgen_tests).step);
+        const confgenfs_test = b.addTest(.{ .root_module = confgenfs });
+        test_step.dependOn(&b.addRunArtifact(confgenfs_test).step);
+    }
 }
