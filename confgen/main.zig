@@ -369,7 +369,10 @@ pub fn run() !void {
 
             var iter = state.files.iterator();
             while (iter.next()) |kv| {
-                try notif.addDir(std.fs.path.dirname(kv.key_ptr.*) orelse ".");
+                switch (kv.value_ptr.content) {
+                    .path => |p| try notif.addDir(std.fs.path.dirname(p) orelse "."),
+                    else => {},
+                }
             }
         }
 
@@ -405,6 +408,19 @@ pub fn run() !void {
 
                     if (arg.options.@"post-eval") |code| {
                         try libcg.luaapi.evalUserCode(l, code);
+                    }
+
+                    // Watch new files
+                    {
+                        try notif.addDir(std.fs.path.dirname(cgfile) orelse ".");
+
+                        var iter = state.files.iterator();
+                        while (iter.next()) |kv| {
+                            switch (kv.value_ptr.content) {
+                                .path => |path| try notif.addDir(std.fs.path.dirname(path) orelse "."),
+                                else => {},
+                            }
+                        }
                     }
 
                     continue;
