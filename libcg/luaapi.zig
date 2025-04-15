@@ -269,6 +269,13 @@ fn lAddString(l: *c.lua_State) !c_int {
         return error.LuaError;
     }
 
+    if (state.files.contains(outpath)) {
+        ffi.luaPushString(l, "addString: duplicate file: ");
+        ffi.luaPushString(l, outpath);
+        c.lua_concat(l, 2);
+        return error.LuaError;
+    }
+
     const outpath_d = try state.files.allocator.dupe(u8, outpath);
     errdefer state.files.allocator.free(outpath_d);
 
@@ -311,8 +318,15 @@ fn lAddPath(l: *c.lua_State) !c_int {
         else
             entry.path;
 
-        const outpath = try std.fs.path.join(state.files.allocator, &.{ targpath, outbase });
+        const outpath = try std.fs.path.resolve(state.files.allocator, &.{ targpath, outbase });
         errdefer state.files.allocator.free(outpath);
+
+        if (state.files.contains(outpath)) {
+            ffi.luaPushString(l, "addPath: duplicate file: ");
+            ffi.luaPushString(l, outpath);
+            c.lua_concat(l, 2);
+            return error.LuaError;
+        }
 
         const inpath = try std.fs.path.resolve(state.files.allocator, &.{ path, entry.path });
         errdefer state.files.allocator.free(inpath);
@@ -349,6 +363,13 @@ fn lAddFile(l: *c.lua_State) !c_int {
         }
         break :blk inpath;
     };
+
+    if (state.files.contains(outpath)) {
+        ffi.luaPushString(l, "addFile: duplicate file: ");
+        ffi.luaPushString(l, outpath);
+        c.lua_concat(l, 2);
+        return error.LuaError;
+    }
 
     const outpath_d = try state.files.allocator.dupe(u8, outpath);
     errdefer state.files.allocator.free(outpath_d);
