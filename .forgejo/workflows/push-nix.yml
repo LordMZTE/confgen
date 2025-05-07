@@ -20,7 +20,7 @@ jobs:
         with:
           extra_nix_config: |
             substituters = https://nix.mzte.de/mzte https://cache.nixos.org
-            trusted-public-keys = mzte:UG9dTnIZ/ZHa8h8emaPnGJkUP8oSsvXsW6VufehM9dg= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+            trusted-public-keys = mzte:ogrhnxLLM+1yZKoJK+DMf8v6ECXc0Pda4Hzw7tu4kU0= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
       - name: Build Derivation
         run: |
