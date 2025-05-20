@@ -54,7 +54,7 @@ pub fn main() u8 {
 }
 
 pub fn run() !void {
-    var debug_gpa = if (@import("builtin").mode == .Debug) std.heap.GeneralPurposeAllocator(.{}){} else {};
+    var debug_gpa = if (@import("builtin").mode == .Debug) std.heap.DebugAllocator(.{}).init else {};
     defer if (@TypeOf(debug_gpa) != void) {
         _ = debug_gpa.deinit();
     };
