@@ -83,6 +83,7 @@ pub fn run() !void {
         .confgenfile = arg.positionals[0],
         .eval = arg.options.eval,
         .post_eval = arg.options.@"post-eval",
+        .mountpoint = arg.positionals[1],
         .fuse = undefined,
         .err = null,
     };

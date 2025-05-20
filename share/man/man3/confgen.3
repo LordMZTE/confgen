@@ -133,6 +133,16 @@ Example:
 .B cg.onDone(function(errors) print(\(dqHad errors: \(dq .. tostring(errors)) end)
 
 .TP
+.B cg.fs
+A table only present under ConfgenFS. It contains the following fields:
+
+.IP \(bu
+The
+.I mountpoint
+field will contain a path to the mountpoint of the filesystem. This is an absolute path unless
+ConfgenFS failed to resolve it, in which case it will be as provided on the command line.
+
+.TP
 .B cg.fmt.json.serialize(value[, pretty])
 Convert an arbitrary lua value to JSON and return that as a string. The JSON will be minified by
 default unless

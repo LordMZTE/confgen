@@ -20,6 +20,7 @@ pub const InitData = struct {
     confgenfile: [:0]const u8,
     eval: ?[]const u8,
     post_eval: ?[]const u8,
+    mountpoint: [:0]const u8,
     fuse: *c.fuse,
     err: ?anyerror,
 };
@@ -366,13 +367,38 @@ fn init(init_data: InitData) !FileSystem {
 
     try std.posix.chdir(cg_state.rootpath);
 
-    std.log.info("loading confgenfile @ {s}", .{init_data.confgenfile});
     const l = try libcg.luaapi.initLuaState(cg_state);
+
+    // Initialize cg.fs table
+    {
+        var realpath_buf: [std.fs.max_path_bytes]u8 = undefined;
+        // If the given mountpoint is absolute, just use that. Otherwise, try to get the absolute
+        // path and fallback to the unmodified path if that fails.
+        const mountpoint = if (std.fs.path.isAbsolute(init_data.mountpoint))
+            init_data.mountpoint
+        else if (std.fs.cwd().realpathZ(
+            init_data.mountpoint,
+            &realpath_buf,
+        )) |rp| rp else |e| fallb: {
+            std.log.warn("failed to get real mountpoint: {}", .{e});
+            break :fallb init_data.mountpoint;
+        };
+
+        libcg.c.lua_getglobal(l, "cg");
+        defer libcg.c.lua_pop(l, 1);
+
+        libcg.c.lua_createtable(l, 0, 1);
+        defer libcg.c.lua_setfield(l, -2, "fs");
+
+        libcg.ffi.luaPushString(l, mountpoint);
+        libcg.c.lua_setfield(l, -2, "mountpoint");
+    }
 
     if (init_data.eval) |code| {
         try libcg.luaapi.evalUserCode(l, code);
     }
 
+    std.log.info("loading confgenfile @ {s}", .{init_data.confgenfile});
     try libcg.luaapi.loadCGFile(l, init_data.confgenfile);
 
     if (init_data.post_eval) |code| {
