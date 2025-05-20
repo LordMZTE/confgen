@@ -466,9 +466,9 @@ fn computeDirectoryCache(self: *FileSystem) !void {
 }
 
 fn deinit(self: *FileSystem) void {
+    libcg.c.lua_close(self.l);
     self.cg_state.deinit();
     self.alloc.destroy(self.cg_state);
-    libcg.c.lua_close(self.l);
     self.genbuf.deinit();
 
     var dircache_iter = self.directory_cache.keyIterator();
