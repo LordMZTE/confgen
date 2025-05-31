@@ -22,6 +22,7 @@ pub const InitData = struct {
     post_eval: ?[]const u8,
     mountpoint: [:0]const u8,
     fuse: *c.fuse,
+    l: *libcg.c.lua_State,
     err: ?anyerror,
 };
 
@@ -367,7 +368,8 @@ fn init(init_data: InitData) !FileSystem {
 
     try std.posix.chdir(cg_state.rootpath);
 
-    const l = try libcg.luaapi.initLuaState(cg_state);
+    const l = init_data.l;
+    try libcg.luaapi.initLuaState(cg_state, l);
 
     // Initialize cg.fs table
     {
@@ -466,7 +468,6 @@ fn computeDirectoryCache(self: *FileSystem) !void {
 }
 
 fn deinit(self: *FileSystem) void {
-    libcg.c.lua_close(self.l);
     self.cg_state.deinit();
     self.alloc.destroy(self.cg_state);
     self.genbuf.deinit();

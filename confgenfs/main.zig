@@ -43,7 +43,7 @@ pub fn main() u8 {
         switch (e) {
             error.InvalidArguments => std.log.err("Invalid Arguments.\n{s}", .{usage}),
             error.MountFailed => std.log.err("Failed to mount the filesystem.", .{}),
-            error.RootfileExec => std.log.err("Failed to execute the confgen file.", .{}),
+            //error.RootfileExec => std.log.err("Failed to execute the confgen file.", .{}),
             error.Explained => {},
             else => std.log.err("UNEXPECTED: {s}", .{@errorName(e)}),
         }
@@ -78,6 +78,9 @@ pub fn run() !void {
 
     c.fuse_set_log_func(ffi.fuseLogFn);
 
+    const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
+    defer libcg.c.lua_close(l);
+
     var init_data = FileSystem.InitData{
         .alloc = alloc,
         .confgenfile = arg.positionals[0],
@@ -85,6 +88,7 @@ pub fn run() !void {
         .post_eval = arg.options.@"post-eval",
         .mountpoint = arg.positionals[1],
         .fuse = undefined,
+        .l = l,
         .err = null,
     };
 
@@ -119,23 +123,85 @@ pub fn run() !void {
         return error.MountFailed;
     defer c.fuse_unmount(fuse);
 
-    if (c.fuse_set_signal_handlers(c.fuse_get_session(fuse)) != 0)
-        return error.FailedToInstallSignalHandlers;
-    defer c.fuse_remove_signal_handlers(c.fuse_get_session(fuse));
+    // main loop
+    {
+        const sigset = comptime sigs: {
+            var sigs = std.posix.empty_sigset;
+            std.os.linux.sigaddset(&sigs, std.os.linux.SIG.INT);
+            std.os.linux.sigaddset(&sigs, std.os.linux.SIG.TERM);
+            break :sigs sigs;
+        };
 
-    const ret = c.fuse_loop(fuse);
+        // use a sigfd to handle signals
+        std.posix.sigprocmask(std.posix.SIG.BLOCK, &sigset, null);
+        const sigfd = try std.posix.signalfd(-1, &sigset, 0);
+        defer std.posix.close(sigfd);
+
+        var fuse_buf = c.fuse_buf{};
+        // There is a fuse_buf_free function, but that's internal for some reason.
+        defer std.c.free(fuse_buf.mem);
+
+        const session = c.fuse_get_session(fuse);
+
+        // This is set to true once we've done some FUSE work in order to then pass a timeout to
+        // poll to invoke the lua GC when we've no work.
+        var did_work_since_last_gc = false;
+
+        var pollfds = [_]std.posix.pollfd{
+            .{
+                .fd = c.fuse_session_fd(session),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = sigfd,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+        };
+
+        while (c.fuse_session_exited(session) == 0) {
+            const nret = try std.posix.poll(
+                &pollfds,
+                if (did_work_since_last_gc) 2 * std.time.ms_per_s else -1,
+            );
+
+            // Hit timeout, we want to do a GC pass.
+            if (nret == 0) {
+                std.log.debug("running GC pass on idle", .{});
+                // return value isn't documented for LUA_GCCOLLECT, probably means nothing.
+                _ = libcg.c.lua_gc(l, libcg.c.LUA_GCCOLLECT, 0);
+                did_work_since_last_gc = false;
+                continue;
+            }
+
+            // event on FUSE socket
+            if (pollfds[0].revents != 0) {
+                const ret = c.fuse_session_receive_buf(session, &fuse_buf);
+                if (ret < 0) {
+                    const err: std.posix.E = @enumFromInt(-ret);
+                    std.log.err("reading FUSE events: {s}", .{@tagName(err)});
+                    return error.Explained;
+                } else if (ret == 0) {
+                    std.log.info("unmounted", .{});
+                    break;
+                }
+
+                c.fuse_session_process_buf(session, &fuse_buf);
+                did_work_since_last_gc = true;
+            }
+
+            // got signal
+            if (pollfds[1].revents != 0) {
+                var siginf: std.os.linux.signalfd_siginfo = undefined;
+                std.debug.assert(try std.posix.read(sigfd, std.mem.asBytes(&siginf)) == @sizeOf(std.os.linux.signalfd_siginfo));
+                std.log.info("caught signal {}, exiting", .{siginf.signo});
+                break;
+            }
+        }
+    }
 
     if (init_data.err) |e| {
         return e;
-    }
-
-    if (ret < 0) {
-        const errno: std.posix.E = @enumFromInt(-ret);
-        std.log.err("error from FUSE main loop: {s}", .{@tagName(errno)});
-        return error.Explained;
-    } else if (ret > 0) {
-        std.log.info("FUSE terminated by signal {}", .{ret});
-    } else {
-        std.log.info("unmounted", .{});
     }
 }

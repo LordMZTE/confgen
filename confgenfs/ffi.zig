@@ -3,9 +3,11 @@ pub const c = @cImport({
     @cDefine("FUSE_USE_VERSION", "35");
 
     @cInclude("fuse.h");
+    @cInclude("fuse_lowlevel.h");
     @cInclude("stdio.h");
 });
 
+// translate-c fails to translate this properly as it contains a bitfield.
 pub const fuse_file_info = extern struct {
     flags: std.posix.O,
     bitfield: packed struct {

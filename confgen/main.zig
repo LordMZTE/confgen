@@ -151,8 +151,9 @@ pub fn run() !void {
 
         try std.posix.chdir(state.rootpath);
 
-        const l = try libcg.luaapi.initLuaState(&state);
+        const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
         defer libcg.c.lua_close(l);
+        try libcg.luaapi.initLuaState(&state, l);
 
         if (arg.options.eval) |code| {
             try libcg.luaapi.evalUserCode(l, code);
@@ -208,8 +209,9 @@ pub fn run() !void {
         };
         defer state.deinit();
 
-        const l = try libcg.luaapi.initLuaState(&state);
+        const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
         defer libcg.c.lua_close(l);
+        try libcg.luaapi.initLuaState(&state, l);
 
         var content_buf = std.ArrayList(u8).init(alloc);
         defer content_buf.deinit();
@@ -310,8 +312,9 @@ pub fn run() !void {
 
     try std.posix.chdir(state.rootpath);
 
-    var l = try libcg.luaapi.initLuaState(&state);
+    var l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
     defer libcg.c.lua_close(l);
+    try libcg.luaapi.initLuaState(&state, l);
 
     if (arg.options.eval) |code| {
         try libcg.luaapi.evalUserCode(l, code);
@@ -386,7 +389,8 @@ pub fn run() !void {
 
                     // Destroy Lua state
                     libcg.c.lua_close(l);
-                    l = try libcg.luaapi.initLuaState(&state);
+                    l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
+                    try libcg.luaapi.initLuaState(&state, l);
 
                     // Reset CgState
                     state.nfile_iters = 0; // old Lua state is dead, so no iterators.

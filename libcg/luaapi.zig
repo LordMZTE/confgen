@@ -58,9 +58,7 @@ pub const GeneratedFile = struct {
     assume_deterministic: bool,
 };
 
-pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
-    const l = c.luaL_newstate().?;
-
+pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
     // open all lua libs
     c.luaL_openlibs(l);
 
@@ -115,8 +113,6 @@ pub fn initLuaState(cgstate: *CgState) !*c.lua_State {
     LTemplate.initMetatable(l);
     LFileIter.initMetatable(l);
     TemplateCode.initMetatable(l);
-
-    return l;
 }
 
 pub fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
