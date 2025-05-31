@@ -124,7 +124,7 @@ $ cat ~/confgenfs/.config/waybar/config
 
 ### Linux
 
-- install the LuaJIT and FUSE3 library and the 0.12 version of Zig
+- install the LuaJIT and FUSE3 library and the 0.14 version of Zig
 - `zig build -Drelease-fast -p ~/.local`
 
 ### Mac
