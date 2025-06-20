@@ -68,3 +68,9 @@ pub fn fuseLogFn(
         else => unreachable,
     }
 }
+
+pub extern fn confgenfsGetFuseVersionFromConnInfo(
+    cinf: *c.fuse_conn_info,
+    maj_out: *u32,
+    min_out: *u32,
+) callconv(.c) void;

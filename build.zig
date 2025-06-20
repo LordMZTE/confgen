@@ -78,6 +78,9 @@ pub fn build(b: *std.Build) void {
             },
         });
         confgenfs.linkSystemLibrary("fuse3", .{});
+        confgenfs.addCSourceFile(.{
+            .file = b.path("confgenfs/fuse_shim.c"),
+        });
 
         const confgenfs_exe = b.addExecutable(.{
             .name = "confgenfs",

@@ -28,9 +28,12 @@ pub const InitData = struct {
 
 const fuse_op_impl = struct {
     pub fn init(ci: ?*c.fuse_conn_info, cfg: ?*c.fuse_config) callconv(.C) ?*anyopaque {
+        var proto_major: u32 = undefined;
+        var proto_minor: u32 = undefined;
+        ffi.confgenfsGetFuseVersionFromConnInfo(ci.?, &proto_major, &proto_minor);
         std.log.info(
             "initializing FUSE with protocol version {}.{}",
-            .{ ci.?.proto_major, ci.?.proto_minor },
+            .{ proto_major, proto_minor },
         );
 
         // New files are only added on reloads, so long cache time is fine.
