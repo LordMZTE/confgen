@@ -68,12 +68,16 @@ pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
     c.lua_pushcfunction(l, ffi.luaFunc(lPrint));
     c.lua_setfield(l, -2, "print");
 
+    // init cg table. Keep nrec up to date
+    c.lua_createtable(l, 0, 10);
+
     // create opt table
     c.lua_newtable(l);
-
-    // init cg table
-    c.lua_newtable(l);
     c.lua_setfield(l, -2, "opt");
+
+    // create lib
+    @import("lualib.zig").pushLibMod(l);
+    c.lua_setfield(l, -2, "lib");
 
     c.lua_pushcfunction(l, ffi.luaFunc(lAddString));
     c.lua_setfield(l, -2, "addString");

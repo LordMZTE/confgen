@@ -1,0 +1,43 @@
+.TH CONFGEN-LIB 3 "2025\-07\-09"
+.SH NAME
+.B Confgen Library API
+\- the
+.I utility library
+of then
+.I Confgen
+template engine.
+
+.SH SYNOPSIS
+The
+.B Confgen Library API
+is available under
+.B cg.lib
+and offers various utility functions, listed below.
+
+.SH DESCRIPTION
+
+.TP
+.B cg.lib.merge(a, b)
+Recursively merges two tables, keys from
+.B b
+taking priority over those from
+.B a
+in case of duplicates. This is done in-place, modifying
+.BR a ,
+which is also returned afterwards.
+
+.TP
+.B cg.lib.map(t, func)
+Map a table, calling
+.B func
+on each value in the table
+.BR t ,
+preserving the keys. Both record values and array values are mapped. The return value will be a new
+table.
+
+.SH SEE ALSO
+.BR confgen (1),
+.BR confgen (3),
+.BR confgen.lua (5),
+.BR confgen-template (5),
+.BR confgenfs (1).
