@@ -239,7 +239,10 @@ pub fn run() !void {
                 std.log.err("reported errors:", .{});
                 bundle.renderToStdErr(.{ .ttyconf = ttyconf });
             },
-            else => return e,
+            else => {
+                errors.deinit();
+                return e;
+            },
         };
         errors.deinit();
 
