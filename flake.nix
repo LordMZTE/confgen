@@ -3,7 +3,7 @@
 
   inputs = {
     # TODO: use unstable once zig 0.14 lands there
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable-small";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     utils.url = "github:numtide/flake-utils";
   };
 
