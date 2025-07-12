@@ -16,6 +16,12 @@ pub fn pushLibMod(l: *c.lua_State) void {
 
     c.lua_pushcfunction(l, ffi.luaFunc(lFilter));
     c.lua_setfield(l, -2, "filter");
+
+    c.lua_pushcfunction(l, ffi.luaFunc(lContains));
+    c.lua_setfield(l, -2, "contains");
+
+    c.lua_pushcfunction(l, ffi.luaFunc(lContainsEq));
+    c.lua_setfield(l, -2, "containsEq");
 }
 
 const lMergeLuaFunc = ffi.luaFunc(lMerge);
@@ -79,7 +85,7 @@ fn lMap(l: *c.lua_State) !c_int {
 
 fn lFilter(l: *c.lua_State) !c_int {
     c.luaL_checktype(l, 1, c.LUA_TTABLE);
-    c.luaL_checkany(l, 2); // Don't make assumptions on what's callable and what isn't.
+    c.luaL_checkany(l, 2);
 
     c.lua_newtable(l);
 
@@ -107,5 +113,45 @@ fn lFilter(l: *c.lua_State) !c_int {
         }
     }
 
+    return 1;
+}
+
+fn lContains(l: *c.lua_State) !c_int {
+    c.luaL_checktype(l, 1, c.LUA_TTABLE);
+    c.luaL_checkany(l, 2);
+
+    c.lua_pushnil(l);
+    while (c.lua_next(l, 1) != 0) {
+        c.lua_pushvalue(l, 2);
+        c.lua_insert(l, -2);
+        c.lua_call(l, 1, 1);
+
+        if (c.lua_toboolean(l, -1) != 0) {
+            c.lua_pushboolean(l, 1);
+            return 1;
+        }
+
+        c.lua_pop(l, 1);
+    }
+
+    c.lua_pushboolean(l, 0);
+    return 1;
+}
+
+fn lContainsEq(l: *c.lua_State) !c_int {
+    c.luaL_checktype(l, 1, c.LUA_TTABLE);
+    c.luaL_checkany(l, 2);
+
+    c.lua_pushnil(l);
+    while (c.lua_next(l, 1) != 0) {
+        if (c.lua_equal(l, -1, 2) != 0) {
+            c.lua_pushboolean(l, 1);
+            return 1;
+        }
+
+        c.lua_pop(l, 1);
+    }
+
+    c.lua_pushboolean(l, 0);
     return 1;
 }

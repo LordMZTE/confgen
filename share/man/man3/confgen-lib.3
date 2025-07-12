@@ -46,6 +46,22 @@ containing exactly those elements for which
 .B func
 returned a truthy value.
 
+.TP
+.B cg.lib.contains(t, func)
+Check if a table
+.B t
+contains at least one element for which
+.B func
+returns a truthy value. Both record and array values are checked.
+
+.TP
+.B cg.lib.containsEq(t, x)
+Check if a table
+.B t
+contains at least one element for which
+.BR "t[i] == x" .
+Both record and array values are checked.
+
 .SH SEE ALSO
 .BR confgen (1),
 .BR confgen (3),
