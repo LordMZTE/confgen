@@ -1,4 +1,4 @@
-.TH CONFGENFS 1 "2025\-07\-09"
+.TH CONFGENFS 1 "2025\-07\-12"
 .SH NAME
 .B confgenfs
 \- FUSE3 filesystem for the
@@ -69,7 +69,7 @@ variable available. Note that this will not always be present. Notably, ConfgenF
 generate metadata without a processing attempting to read the file sometimes. Templates must handle
 this being nil.
 
-This is a table containing the following fields:
+This is a table containing the following fields and methods:
 .TP
 .B fsctx.pid
 The process ID of the process reading the file. This could be combined with the procfs to get
@@ -82,6 +82,20 @@ The UID and GID of the user reading the file.
 .TP
 .BR fsctx.umask
 The umask of the reader process.
+
+.TP
+.BR fsctx:getCallerCmd()
+Returns a list table containing the command line of the process reading the file.
+
+Example:
+.B fsctx:getCallerCmd() = { \(dqcat\(dq, \(dq/path/to/confgenfs/my_file\(dq }
+
+.TP
+.BR fsctx:getCallerEnv()
+Returns a table containing the environment of the process reading the file.
+
+Example:
+.B fsctx:getCallerEnv() = { HOME = \(dq/home/user\(dq, ... }
 
 .SH OPTIONS
 .TP

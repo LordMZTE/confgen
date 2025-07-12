@@ -37,11 +37,10 @@ pub const TemplateCode = struct {
 
     pub fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, lua_registry_key);
+        defer c.lua_pop(l, 1);
 
         c.lua_pushcfunction(l, ffi.luaFunc(lGC));
         c.lua_setfield(l, -2, "__gc");
-
-        c.lua_pop(l, 1);
     }
 };
 

@@ -667,14 +667,13 @@ pub const LFileIter = struct {
 
     fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, lua_registry_key);
+        defer c.lua_pop(l, 1);
 
         c.lua_pushcfunction(l, ffi.luaFunc(lGC));
         c.lua_setfield(l, -2, "__gc");
 
         c.lua_pushcfunction(l, ffi.luaFunc(lCall));
         c.lua_setfield(l, -2, "__call");
-
-        c.lua_pop(l, 1);
     }
 };
 
@@ -882,6 +881,7 @@ pub const LTemplate = struct {
 
     fn initMetatable(l: *c.lua_State) void {
         _ = c.luaL_newmetatable(l, lua_registry_key);
+        defer c.lua_pop(l, 1);
 
         c.lua_pushcfunction(l, ffi.luaFunc(lGC));
         c.lua_setfield(l, -2, "__gc");
@@ -909,7 +909,5 @@ pub const LTemplate = struct {
 
         c.lua_pushvalue(l, -1);
         c.lua_setfield(l, -2, "__index");
-
-        c.lua_pop(l, 1);
     }
 };

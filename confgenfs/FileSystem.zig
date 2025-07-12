@@ -4,6 +4,8 @@ const c = ffi.c;
 
 const ffi = @import("ffi.zig");
 
+const LFsCtx = @import("LFsCtx.zig");
+
 const FileSystem = @This();
 
 pub const fuse_ops = ops: {
@@ -373,6 +375,7 @@ fn init(init_data: InitData) !FileSystem {
 
     const l = init_data.l;
     try libcg.luaapi.initLuaState(cg_state, l);
+    LFsCtx.initMetatable(l);
 
     // Initialize cg.fs table
     {
@@ -604,20 +607,9 @@ fn generateCGFile(
     libcg.c.lua_newtable(self.l);
     libcg.luaapi.LTemplate.createTmplEnv(self.l);
     if (maybe_fsctx) |fsctx| {
-        libcg.c.lua_createtable(self.l, 0, 3);
+        const lfsctx = LFsCtx{ .ctx = fsctx };
 
-        libcg.c.lua_pushinteger(self.l, fsctx.pid);
-        libcg.c.lua_setfield(self.l, -2, "pid");
-
-        libcg.c.lua_pushinteger(self.l, fsctx.uid);
-        libcg.c.lua_setfield(self.l, -2, "uid");
-
-        libcg.c.lua_pushinteger(self.l, fsctx.gid);
-        libcg.c.lua_setfield(self.l, -2, "gid");
-
-        libcg.c.lua_pushinteger(self.l, fsctx.umask);
-        libcg.c.lua_setfield(self.l, -2, "umask");
-
+        lfsctx.push(self.l);
         libcg.c.lua_setfield(self.l, -2, "fsctx");
     }
     const genfile = try libcg.luaapi.generateWithEnv(self.l, tmpl);
