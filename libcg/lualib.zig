@@ -13,8 +13,10 @@ pub fn pushLibMod(l: *c.lua_State) void {
 
     c.lua_pushcfunction(l, ffi.luaFunc(lMap));
     c.lua_setfield(l, -2, "map");
-}
 
+    c.lua_pushcfunction(l, ffi.luaFunc(lFilter));
+    c.lua_setfield(l, -2, "filter");
+}
 
 const lMergeLuaFunc = ffi.luaFunc(lMerge);
 fn lMerge(l: *c.lua_State) !c_int {
@@ -61,15 +63,6 @@ fn lMap(l: *c.lua_State) !c_int {
     // TODO: refactor other stuff to be like this
     c.luaL_checkany(l, 2); // Don't make assumptions on what's callable and what isn't.
 
-    //const len = c.lua_objlen(l, 1);
-    //c.lua_createtable(l, @intCast(len), 0);
-    //for (1..(len + 1)) |i| {
-    //    c.lua_pushvalue(l, 2);
-    //    c.lua_rawgeti(l, 1, @intCast(i));
-    //    c.lua_call(l, 1, 1);
-    //    c.lua_rawseti(l, -2, @intCast(i));
-    //}
-
     c.lua_createtable(l, @intCast(c.lua_objlen(l, 1)), 0); // output
     c.lua_pushnil(l);
     while (c.lua_next(l, 1) != 0) {
@@ -79,6 +72,39 @@ fn lMap(l: *c.lua_State) !c_int {
         c.lua_pushvalue(l, -2);
         c.lua_insert(l, -2);
         c.lua_settable(l, -4);
+    }
+
+    return 1;
+}
+
+fn lFilter(l: *c.lua_State) !c_int {
+    c.luaL_checktype(l, 1, c.LUA_TTABLE);
+    c.luaL_checkany(l, 2); // Don't make assumptions on what's callable and what isn't.
+
+    c.lua_newtable(l);
+
+    c.lua_pushnil(l);
+    while (c.lua_next(l, 1) != 0) {
+        // Duplicate value
+        c.lua_pushvalue(l, -1);
+
+        // Invoke predicate
+        c.lua_pushvalue(l, 2);
+        c.lua_insert(l, -2);
+        c.lua_call(l, 1, 1);
+
+        const keep = c.lua_toboolean(l, -1) != 0;
+        c.lua_pop(l, 1);
+
+        if (keep) {
+            // Set value with same key in output
+            c.lua_pushvalue(l, -2);
+            c.lua_insert(l, -2);
+            c.lua_settable(l, -4);
+        } else {
+            // Pop value
+            c.lua_pop(l, 1);
+        }
     }
 
     return 1;
