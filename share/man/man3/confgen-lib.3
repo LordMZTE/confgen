@@ -1,4 +1,4 @@
-.TH CONFGEN-LIB 3 "2025\-07\-09"
+.TH CONFGEN-LIB 3 "2025\-07\-13"
 .SH NAME
 .B Confgen Library API
 \- the
@@ -61,6 +61,13 @@ Check if a table
 contains at least one element for which
 .BR "t[i] == x" .
 Both record and array values are checked.
+
+.TP
+.B cg.lib.lazy(func)
+Returns an object that, when invoked the first time will call
+.BR func ,
+returning its return value as well as saving it. On future invocations, the cached return value will
+be returned immediately.
 
 .SH SEE ALSO
 .BR confgen (1),

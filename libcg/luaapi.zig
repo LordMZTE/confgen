@@ -4,6 +4,7 @@ const c = ffi.c;
 
 const format = @import("format.zig");
 const luagen = @import("luagen.zig");
+const lualib = @import("lualib.zig");
 
 const TemplateCode = luagen.TemplateCode;
 const Parser = @import("Parser.zig");
@@ -76,7 +77,7 @@ pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
     c.lua_setfield(l, -2, "opt");
 
     // create lib
-    @import("lualib.zig").pushLibMod(l);
+    lualib.pushLibMod(l);
     c.lua_setfield(l, -2, "lib");
 
     c.lua_pushcfunction(l, ffi.luaFunc(lAddString));
@@ -117,6 +118,7 @@ pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
     LTemplate.initMetatable(l);
     LFileIter.initMetatable(l);
     TemplateCode.initMetatable(l);
+    lualib.LLazy.initMetatable(l);
 }
 
 pub fn loadCGFile(l: *c.lua_State, cgfile: [*:0]const u8) !void {
