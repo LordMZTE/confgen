@@ -6,6 +6,7 @@ const c = ffi.c;
 const ffi = @import("ffi.zig");
 
 const FileSystem = @import("FileSystem.zig");
+const DataCache = @import("DataCache.zig");
 
 const Args = struct {
     help: bool = false,
@@ -81,6 +82,9 @@ pub fn run() !void {
     const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
     defer libcg.c.lua_close(l);
 
+    var data_cache = DataCache.empty;
+    defer data_cache.deinit(alloc);
+
     var init_data = FileSystem.InitData{
         .alloc = alloc,
         .confgenfile = arg.positionals[0],
@@ -88,6 +92,7 @@ pub fn run() !void {
         .post_eval = arg.options.@"post-eval",
         .mountpoint = arg.positionals[1],
         .fuse = undefined,
+        .data_cache = &data_cache,
         .l = l,
         .err = null,
     };
@@ -137,6 +142,9 @@ pub fn run() !void {
         const sigfd = try std.posix.signalfd(-1, &sigset, 0);
         defer std.posix.close(sigfd);
 
+        const datacache_tfd = try std.posix.timerfd_create(.MONOTONIC, .{});
+        defer std.posix.close(datacache_tfd);
+
         var fuse_buf = c.fuse_buf{};
         // There is a fuse_buf_free function, but that's internal for some reason.
         defer std.c.free(fuse_buf.mem);
@@ -147,18 +155,21 @@ pub fn run() !void {
         // poll to invoke the lua GC when we've no work.
         var did_work_since_last_gc = false;
 
-        var pollfds = [_]std.posix.pollfd{
-            .{
-                .fd = c.fuse_session_fd(session),
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            },
-            .{
-                .fd = sigfd,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            },
-        };
+        var cache_timer_next: ?i64 = null;
+
+        var pollfds = [_]std.posix.pollfd{ .{
+            .fd = c.fuse_session_fd(session),
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }, .{
+            .fd = sigfd,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }, .{
+            .fd = datacache_tfd,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        } };
 
         while (c.fuse_session_exited(session) == 0) {
             const nret = try std.posix.poll(
@@ -198,6 +209,22 @@ pub fn run() !void {
                 std.log.info("caught signal {}, exiting", .{siginf.signo});
                 break;
             }
+
+            // need to tick the data cache
+            if (pollfds[2].revents != 0) {
+                var nexpirations: u64 = undefined;
+                std.debug.assert(try std.posix.read(datacache_tfd, std.mem.asBytes(&nexpirations)) == 8);
+
+                cache_timer_next = null;
+                data_cache.tick(alloc);
+            }
+
+            if (data_cache.next_time != std.math.maxInt(i64)) {
+                if ((cache_timer_next orelse std.math.maxInt(i64)) > data_cache.next_time) {
+                    try data_cache.armTimerFD(datacache_tfd);
+                    cache_timer_next = data_cache.next_time;
+                }
+            } else cache_timer_next = null;
         }
     }
 

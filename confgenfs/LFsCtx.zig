@@ -9,7 +9,7 @@ pub const lua_registry_key = "confgenfs_fsctx";
 ctx: c.struct_fuse_context,
 
 pub fn push(self: *const @This(), l: *libcg.c.lua_State) void {
-    libcg.c.lua_createtable(l, 0, 3);
+    libcg.c.lua_createtable(l, 0, 4);
 
     libcg.c.luaL_getmetatable(l, lua_registry_key);
     _ = libcg.c.lua_setmetatable(l, -2);

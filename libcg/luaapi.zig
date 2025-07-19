@@ -57,6 +57,10 @@ pub const GeneratedFile = struct {
     content: []const u8,
     mode: u24,
     assume_deterministic: bool,
+
+    /// Null to use some other fallback value, zero for no caching and positive number for
+    /// milliseconds.
+    cachetime: ?i64,
 };
 
 pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
@@ -219,6 +223,7 @@ pub fn generateWithEnv(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
         },
         .mode = tmpl.mode,
         .assume_deterministic = tmpl.assume_deterministic,
+        .cachetime = tmpl.cachetime,
     };
 }
 
@@ -684,6 +689,7 @@ pub const LTemplate = struct {
 
     mode: u24 = 0o644,
     assume_deterministic: bool = false,
+    cachetime: ?i64 = null,
     output: std.ArrayList(u8),
 
     /// Inserts standard values into an fenv table on top of the stack to be used for the
@@ -838,6 +844,19 @@ pub const LTemplate = struct {
         return 0;
     }
 
+    fn lSetCacheTime(l: *c.lua_State) !c_int {
+        const self = ffi.luaGetUdata(LTemplate, l, 1);
+        c.luaL_checkany(l, 2);
+
+        if (c.lua_toboolean(l, 2) == 0) {
+            self.cachetime = null;
+        } else {
+            self.cachetime = c.lua_tointeger(l, 2);
+        }
+
+        return 0;
+    }
+
     fn lSubtmpl(l: *c.lua_State) !c_int {
         const self = ffi.luaGetUdata(LTemplate, l, 1);
         c.luaL_checktype(l, 2, c.LUA_TFUNCTION);
@@ -902,6 +921,9 @@ pub const LTemplate = struct {
 
         c.lua_pushcfunction(l, ffi.luaFunc(lSetAssumeDeterministic));
         c.lua_setfield(l, -2, "setAssumeDeterministic");
+
+        c.lua_pushcfunction(l, ffi.luaFunc(lSetCacheTime));
+        c.lua_setfield(l, -2, "setCacheTime");
 
         c.lua_pushcfunction(l, ffi.luaFunc(lSubtmpl));
         c.lua_setfield(l, -2, "subtmpl");

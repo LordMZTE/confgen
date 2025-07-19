@@ -142,6 +142,14 @@ The
 field will contain a path to the mountpoint of the filesystem. This is an absolute path unless
 ConfgenFS failed to resolve it, in which case it will be as provided on the command line.
 
+.IP \(bu
+The
+.I cachetime
+field is a number of milliseconds which templates will be cached before being re-evaluated. If this
+is unset (default) or
+.BR 0 ,
+no caching is done at all.
+
 .TP
 .B cg.fmt.json.serialize(value[, pretty])
 Convert an arbitrary lua value to JSON and return that as a string. The JSON will be minified by
@@ -265,6 +273,19 @@ is invoked.
 
 Example:
 .B tmpl:setAssumeDeterministic(true) -- File does not change; ConfgenFS reports size
+
+.TP
+.B tmpl:setCacheTime(time)
+Tell
+.I ConfgenFS
+that this template should be cached for
+.B time
+milliseconds and only then be run again.
+
+Pass
+.B 0
+for no caching or a falsy value to use the global fallback,
+.BR cg.fs.cachetime .
 
 .TP
 .B tmpl:subtmpl(func)

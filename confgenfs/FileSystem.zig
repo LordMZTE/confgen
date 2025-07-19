@@ -4,6 +4,7 @@ const c = ffi.c;
 
 const ffi = @import("ffi.zig");
 
+const DataCache = @import("DataCache.zig");
 const LFsCtx = @import("LFsCtx.zig");
 
 const FileSystem = @This();
@@ -23,6 +24,7 @@ pub const InitData = struct {
     eval: ?[]const u8,
     post_eval: ?[]const u8,
     mountpoint: [:0]const u8,
+    data_cache: *DataCache,
     fuse: *c.fuse,
     l: *libcg.c.lua_State,
     err: ?anyerror,
@@ -97,11 +99,24 @@ const fuse_op_impl = struct {
                 },
                 .mode = 0o444,
                 .assume_deterministic = false,
+                .cachetime = 0,
             } };
         } else blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
             const cgfile = fs.cg_state.files.get(path) orelse return errnoRet(.NOENT);
+
+            if (fs.data_cache.inner.get(path)) |cached| {
+                std.log.info("cached {s}", .{path});
+                const content_d = fs.alloc.dupe(u8, cached.data) catch
+                    return errnoRet(.NOMEM);
+                break :blk .{ .cgfile = .{
+                    .content = content_d,
+                    .mode = cached.mode,
+                    .assume_deterministic = false,
+                    .cachetime = 0,
+                } };
+            }
 
             const content = fs.generateCGFile(cgfile, path, fuse_ctx) catch |e| {
                 std.log.err("generating '{s}': {}", .{ path, e });
@@ -155,12 +170,12 @@ const fuse_op_impl = struct {
         fi_r: ?*c.fuse_file_info,
     ) callconv(.C) c_int {
         _ = path_p;
+        _ = offset;
+
         const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r));
         const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
 
         const buf = buf_p.?[0..bufsiz];
-
-        std.log.debug("{}", .{offset});
 
         switch (fs.handles[fi.fh] orelse return errnoRet(.BADF)) {
             .cgfile => return errnoRet(.BADF),
@@ -358,6 +373,9 @@ directory_cache: Cache(void),
 /// once and then cache it, but I don't think this is avoidable.
 meta_cache: Cache(FileMeta),
 
+/// A cache that stores file content that is to be cached for a certain duration.
+data_cache: *DataCache,
+
 /// An array storing all possible open file handles. When a new file is opened,
 /// the first unused is used.
 handles: [512]?FileHandle,
@@ -395,11 +413,14 @@ fn init(init_data: InitData) !FileSystem {
         libcg.c.lua_getglobal(l, "cg");
         defer libcg.c.lua_pop(l, 1);
 
-        libcg.c.lua_createtable(l, 0, 1);
+        libcg.c.lua_createtable(l, 0, 2);
         defer libcg.c.lua_setfield(l, -2, "fs");
 
         libcg.ffi.luaPushString(l, mountpoint);
         libcg.c.lua_setfield(l, -2, "mountpoint");
+
+        libcg.c.lua_pushinteger(l, 0);
+        libcg.c.lua_setfield(l, -2, "cachtime");
     }
 
     if (init_data.eval) |code| {
@@ -421,6 +442,7 @@ fn init(init_data: InitData) !FileSystem {
         .genbuf = std.ArrayList(u8).init(init_data.alloc),
         .directory_cache = Cache(void).init(init_data.alloc),
         .meta_cache = Cache(FileMeta).init(init_data.alloc),
+        .data_cache = init_data.data_cache,
         .handles = [1]?FileHandle{null} ** 512,
     };
     errdefer self.deinit();
@@ -579,6 +601,7 @@ fn generateCGFile(
             .content = try self.alloc.dupe(u8, content),
             .mode = copy_mode & 0o555, // read-only
             .assume_deterministic = true,
+            .cachetime = 0,
         };
     }
 
@@ -613,6 +636,28 @@ fn generateCGFile(
         libcg.c.lua_setfield(self.l, -2, "fsctx");
     }
     const genfile = try libcg.luaapi.generateWithEnv(self.l, tmpl);
+
+    const cachetime = genfile.cachetime orelse global: {
+        libcg.c.lua_getglobal(self.l, "cg");
+        libcg.c.lua_getfield(self.l, -1, "fs");
+        libcg.c.lua_getfield(self.l, -1, "cachetime");
+        defer libcg.c.lua_pop(self.l, 3);
+
+        break :global libcg.c.lua_tointeger(self.l, -1);
+    };
+
+    if (cachetime > 0) {
+        std.log.debug("new in data cache: {s}", .{name});
+
+        const data_d = try self.alloc.dupe(u8, genfile.content);
+        errdefer self.alloc.free(data_d);
+
+        try self.data_cache.put(self.alloc, name, .{
+            .freetime = DataCache.now() + cachetime,
+            .data = data_d,
+            .mode = genfile.mode,
+        });
+    }
 
     const meta = FileMeta{
         .mode = genfile.mode,

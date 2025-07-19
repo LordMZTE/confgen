@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
 
     libcg.linkSystemLibrary("luajit", .{});
 
-    const libcg_test = b.addTest(.{ .root_module = libcg });
+    const libcg_test = b.addTest(.{ .root_module = libcg, .name = "libcg test" });
 
     const confgen = b.addModule("confgen", .{
         .root_source_file = b.path("confgen/main.zig"),
@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
     const run_confgen_step = b.step("run-confgen", "Run the confgen binary");
     run_confgen_step.dependOn(&run_confgen_cmd.step);
 
-    const confgen_test = b.addTest(.{ .root_module = confgen });
+    const confgen_test = b.addTest(.{ .root_module = confgen, .name = "confgen test" });
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(libcg_test).step);
@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
         const run_confgenfs_step = b.step("run-confgenfs", "Run the confgenfs binary");
         run_confgenfs_step.dependOn(&run_confgenfs_cmd.step);
 
-        const confgenfs_test = b.addTest(.{ .root_module = confgenfs });
+        const confgenfs_test = b.addTest(.{ .root_module = confgenfs, .name = "confgenfs test" });
         test_step.dependOn(&b.addRunArtifact(confgenfs_test).step);
     }
 }
