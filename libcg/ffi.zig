@@ -9,7 +9,7 @@ pub const c = @cImport({
 /// Generates a wrapper function with error handling for a lua CFunction
 pub fn luaFunc(comptime func: anytype) c.lua_CFunction {
     return &struct {
-        fn f(l: ?*c.lua_State) callconv(.C) c_int {
+        fn f(l: ?*c.lua_State) callconv(.c) c_int {
             return func(l.?) catch |e| {
                 // If error.LuaError is returned, an error value must be on the stack.
                 if (e != error.LuaError) {
@@ -70,28 +70,69 @@ pub inline fn luaPushString(l: *c.lua_State, s: []const u8) void {
 
 pub const StackWriter = struct {
     l: *c.lua_State,
+    writer: std.Io.Writer,
     written: u31 = 0,
 
-    const Writer = std.io.Writer(*StackWriter, error{}, write);
+    const vtable: std.Io.Writer.VTable = .{ .drain = drain };
 
-    pub fn write(self: *StackWriter, bytes: []const u8) error{}!usize {
-        luaPushString(self.l, bytes);
-        self.written += 1;
-        return bytes.len;
+    pub fn init(l: *c.lua_State, buffer: []u8) StackWriter {
+        return .{
+            .l = l,
+            .writer = .{
+                .buffer = buffer,
+                .vtable = &vtable,
+            },
+        };
     }
 
-    pub fn writer(self: *StackWriter) Writer {
-        return .{ .context = self };
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *StackWriter = @fieldParentPtr("writer", w);
+        var written: usize = 0;
+
+        // write buffer
+        if (w.end > 0) {
+            const to_write = w.buffer[0..w.end];
+            luaPushString(self.l, to_write);
+            self.written += 1;
+            w.end = 0;
+        }
+
+        // write non-splat slices
+        {
+            for (data[0 .. data.len - 1]) |iov| {
+                luaPushString(self.l, iov);
+                self.written += 1;
+                written += iov.len;
+            }
+        }
+
+        // write splat
+        {
+            const iov = data[data.len - 1];
+            for (0..splat) |_| {
+                luaPushString(self.l, iov);
+                self.written += 1;
+                written += iov.len;
+            }
+        }
+
+        return written;
     }
 
     pub fn concat(self: *StackWriter) void {
-        c.lua_concat(self.l, self.written);
+        if (self.written == 0) {
+            luaPushString(self.l, "");
+        } else if (self.written >= 2) {
+            c.lua_concat(self.l, self.written);
+        }
         self.written = 0;
     }
 };
 
 pub fn luaFmtString(l: *c.lua_State, comptime fmt: []const u8, args: anytype) !void {
-    var ctx = StackWriter{ .l = l };
-    try std.fmt.format(ctx.writer(), fmt, args);
+    var write_buf: [64]u8 = undefined;
+    var ctx: StackWriter = .init(l, &write_buf);
+    try ctx.writer.print(fmt, args);
+    try ctx.writer.flush();
     ctx.concat();
 }

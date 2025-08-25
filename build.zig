@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("libcg/main.zig"),
         .link_libc = true,
         // required for luajit errors
-        .unwind_tables = .@"async",
+        .unwind_tables = .async,
         .target = target,
         .optimize = optimize,
     });
@@ -41,6 +41,7 @@ pub fn build(b: *std.Build) void {
     const confgen_exe = b.addExecutable(.{
         .name = "confgen",
         .root_module = confgen,
+        .use_llvm = true, // self-hosted crashes
     });
 
     b.installArtifact(confgen_exe);
@@ -85,6 +86,7 @@ pub fn build(b: *std.Build) void {
         const confgenfs_exe = b.addExecutable(.{
             .name = "confgenfs",
             .root_module = confgenfs,
+            .use_llvm = true, // self-hosted crashes
         });
 
         b.installArtifact(confgenfs_exe);

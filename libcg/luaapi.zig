@@ -15,8 +15,10 @@ pub const on_done_callbacks_key = "on_done_callbacks";
 const iters_alive_errmsg = "Cannot add file as file iterators are still alive!";
 
 pub const CgState = struct {
+    alloc: std.mem.Allocator,
+
     rootpath: []const u8,
-    files: std.StringHashMap(CgFile),
+    files: std.StringHashMapUnmanaged(CgFile),
 
     /// Number of currently alive iterators over the files map. This is in place to cause an error
     /// when the user attempts concurrent modification.
@@ -26,10 +28,10 @@ pub const CgState = struct {
         std.debug.assert(self.nfile_iters == 0);
         var iter = self.files.iterator();
         while (iter.next()) |kv| {
-            self.files.allocator.free(kv.key_ptr.*);
-            kv.value_ptr.*.deinit(self.files.allocator);
+            self.alloc.free(kv.key_ptr.*);
+            kv.value_ptr.*.deinit(self.alloc);
         }
-        self.files.deinit();
+        self.files.deinit(self.alloc);
     }
 };
 
@@ -203,7 +205,7 @@ pub fn generateWithEnv(l: *c.lua_State, code: TemplateCode) !GeneratedFile {
     }
 
     // initialize template
-    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    const tmpl = (try LTemplate.init(state.alloc)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
@@ -248,8 +250,10 @@ pub fn callOnDoneCallbacks(l: *c.lua_State, errors: bool) void {
 fn lPrint(l: *c.lua_State) !c_int {
     const nargs = c.lua_gettop(l);
 
-    var buf_writer = std.io.bufferedWriter(std.io.getStdErr().writer());
-    var writer = buf_writer.writer();
+    var write_buf: [128]u8 = undefined;
+    var fwriter = std.fs.File.stderr().writer(&write_buf);
+    var writer = &fwriter.interface;
+
     try writer.writeAll("\x1b[1;34mL:\x1b[0m ");
 
     for (0..@intCast(nargs)) |i| {
@@ -260,7 +264,7 @@ fn lPrint(l: *c.lua_State) !c_int {
     }
 
     try writer.writeByte('\n');
-    try buf_writer.flush();
+    try writer.flush();
     return 0;
 }
 
@@ -283,18 +287,18 @@ fn lAddString(l: *c.lua_State) !c_int {
         return error.LuaError;
     }
 
-    const outpath_d = try state.files.allocator.dupe(u8, outpath);
-    errdefer state.files.allocator.free(outpath_d);
+    const outpath_d = try state.alloc.dupe(u8, outpath);
+    errdefer state.alloc.free(outpath_d);
 
-    const data_d = try state.files.allocator.dupe(u8, data);
-    errdefer state.files.allocator.free(data_d);
+    const data_d = try state.alloc.dupe(u8, data);
+    errdefer state.alloc.free(data_d);
 
-    if (try state.files.fetchPut(outpath_d, CgFile{
+    if (try state.files.fetchPut(state.alloc, outpath_d, CgFile{
         .content = .{ .string = data_d },
         .copy = copy,
     })) |old| {
-        state.files.allocator.free(old.key);
-        old.value.deinit(state.files.allocator);
+        state.alloc.free(old.key);
+        old.value.deinit(state.alloc);
     }
     return 0;
 }
@@ -313,7 +317,7 @@ fn lAddPath(l: *c.lua_State) !c_int {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
 
-    var iter = try dir.walk(state.files.allocator);
+    var iter = try dir.walk(state.alloc);
     defer iter.deinit();
 
     while (try iter.next()) |entry| {
@@ -325,8 +329,8 @@ fn lAddPath(l: *c.lua_State) !c_int {
         else
             entry.path;
 
-        const outpath = try std.fs.path.resolve(state.files.allocator, &.{ targpath, outbase });
-        errdefer state.files.allocator.free(outpath);
+        const outpath = try std.fs.path.resolve(state.alloc, &.{ targpath, outbase });
+        errdefer state.alloc.free(outpath);
 
         if (state.files.contains(outpath)) {
             ffi.luaPushString(l, "addPath: duplicate file: ");
@@ -335,15 +339,15 @@ fn lAddPath(l: *c.lua_State) !c_int {
             return error.LuaError;
         }
 
-        const inpath = try std.fs.path.resolve(state.files.allocator, &.{ path, entry.path });
-        errdefer state.files.allocator.free(inpath);
+        const inpath = try std.fs.path.resolve(state.alloc, &.{ path, entry.path });
+        errdefer state.alloc.free(inpath);
 
-        if (try state.files.fetchPut(outpath, .{
+        if (try state.files.fetchPut(state.alloc, outpath, .{
             .content = .{ .path = inpath },
             .copy = !std.mem.endsWith(u8, entry.path, ".cgt"),
         })) |old| {
-            state.files.allocator.free(old.key);
-            old.value.deinit(state.files.allocator);
+            state.alloc.free(old.key);
+            old.value.deinit(state.alloc);
         }
     }
 
@@ -378,18 +382,18 @@ fn lAddFile(l: *c.lua_State) !c_int {
         return error.LuaError;
     }
 
-    const outpath_d = try state.files.allocator.dupe(u8, outpath);
-    errdefer state.files.allocator.free(outpath_d);
+    const outpath_d = try state.alloc.dupe(u8, outpath);
+    errdefer state.alloc.free(outpath_d);
 
-    const inpath_d = try state.files.allocator.dupe(u8, inpath);
-    errdefer state.files.allocator.free(inpath_d);
+    const inpath_d = try state.alloc.dupe(u8, inpath);
+    errdefer state.alloc.free(inpath_d);
 
-    if (try state.files.fetchPut(outpath_d, .{
+    if (try state.files.fetchPut(state.alloc, outpath_d, .{
         .content = .{ .path = inpath_d },
         .copy = !std.mem.endsWith(u8, inpath, ".cgt"),
     })) |old| {
-        state.files.allocator.free(old.key);
-        old.value.deinit(state.files.allocator);
+        state.alloc.free(old.key);
+        old.value.deinit(state.alloc);
     }
 
     return 0;
@@ -426,17 +430,17 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     }
 
     {
-        const src_alloc = try state.files.allocator.dupe(u8, source);
+        const src_alloc = try state.alloc.dupe(u8, source);
         var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(state.files.allocator);
+        try errors.init(state.alloc);
         const tmpl_code = luagen.generateLua(
-            state.files.allocator,
+            state.alloc,
             &errors,
             src_alloc,
             source_name,
         ) catch |e| return processTmplLoadErr(
             l,
-            state.files.allocator,
+            state.alloc,
             try errors.toOwnedBundle(""),
             e,
         );
@@ -470,7 +474,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     }
 
     // add tmpl
-    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    const tmpl = (try LTemplate.init(state.alloc)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
@@ -481,7 +485,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
     }
 
     const output = try tmpl.getOutput(l);
-    defer state.files.allocator.free(output);
+    defer state.alloc.free(output);
 
     ffi.luaPushString(l, output);
     return 1;
@@ -511,20 +515,20 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
 
     {
         const file_content = try std.fs.cwd().readFileAlloc(
-            state.files.allocator,
+            state.alloc,
             inpath,
             std.math.maxInt(usize),
         );
         var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(state.files.allocator);
+        try errors.init(state.alloc);
         const tmpl_code = luagen.generateLua(
-            state.files.allocator,
+            state.alloc,
             &errors,
             file_content,
             inpath,
         ) catch |e| return processTmplLoadErr(
             l,
-            state.files.allocator,
+            state.alloc,
             try errors.toOwnedBundle(""),
             e,
         );
@@ -555,7 +559,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
         c.lua_setfield(l, -2, "tmplcode");
     }
 
-    const tmpl = (try LTemplate.init(state.files.allocator)).push(l);
+    const tmpl = (try LTemplate.init(state.alloc)).push(l);
     c.lua_setfield(l, -2, "tmpl");
 
     _ = c.lua_setfenv(l, -2);
@@ -566,7 +570,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
     }
 
     const output = try tmpl.getOutput(l);
-    defer state.files.allocator.free(output);
+    defer state.alloc.free(output);
 
     c.lua_pushlstring(l, output.ptr, output.len);
     return 1;
@@ -582,9 +586,11 @@ fn processTmplLoadErr(
     defer errors.deinit(alloc);
     switch (err) {
         error.Reported => {
-            var writer = ffi.StackWriter{ .l = l };
-            _ = try writer.write("parsing template:\n");
-            try errors.renderToWriter(.{ .ttyconf = .no_color }, writer.writer());
+            var write_buf: [256]u8 = undefined;
+            var writer: ffi.StackWriter = .init(l, &write_buf);
+            try writer.writer.writeAll("parsing template:\n");
+            try errors.renderToWriter(.{ .ttyconf = .no_color }, &writer.writer);
+            try writer.writer.flush();
 
             writer.concat();
             return error.LuaError;
@@ -690,6 +696,8 @@ pub const LTemplate = struct {
     mode: u24 = 0o644,
     assume_deterministic: bool = false,
     cachetime: ?i64 = null,
+
+    alloc: std.mem.Allocator,
     output: std.ArrayList(u8),
 
     /// Inserts standard values into an fenv table on top of the stack to be used for the
@@ -704,12 +712,13 @@ pub const LTemplate = struct {
 
     pub fn init(alloc: std.mem.Allocator) !LTemplate {
         return .{
-            .output = std.ArrayList(u8).init(alloc),
+            .alloc = alloc,
+            .output = .empty,
         };
     }
 
     pub fn deinit(self: *LTemplate) void {
-        self.output.deinit();
+        self.output.deinit(self.alloc);
     }
 
     pub fn push(self: LTemplate, l: *c.lua_State) *LTemplate {
@@ -738,7 +747,7 @@ pub const LTemplate = struct {
         // check if there's no post processor
         if (c.lua_isnil(l, -1)) {
             c.lua_settop(l, top);
-            return try self.output.allocator.dupe(u8, self.output.items);
+            return try self.alloc.dupe(u8, self.output.items);
         }
 
         c.lua_pushlstring(l, self.output.items.ptr, self.output.items.len);
@@ -754,7 +763,7 @@ pub const LTemplate = struct {
 
         const out = ffi.luaConvertString(l, -1);
 
-        return try self.output.allocator.dupe(u8, out);
+        return try self.alloc.dupe(u8, out);
     }
 
     fn lGC(l: *c.lua_State) !c_int {
@@ -778,7 +787,7 @@ pub const LTemplate = struct {
         if (idx >= code.literals.len)
             return error.InvalidIndex;
 
-        try self.output.appendSlice(code.literals[idx]);
+        try self.output.appendSlice(self.alloc, code.literals[idx]);
 
         return 0;
     }
@@ -788,7 +797,7 @@ pub const LTemplate = struct {
         if (c.lua_isnil(l, 2)) return 0; // do nothing if passed nil
 
         const self = ffi.luaGetUdata(LTemplate, l, 1);
-        try self.output.appendSlice(ffi.luaConvertString(l, 2));
+        try self.output.appendSlice(self.alloc, ffi.luaConvertString(l, 2));
 
         return 0;
     }
@@ -865,14 +874,14 @@ pub const LTemplate = struct {
         c.lua_pushvalue(l, 2);
 
         // We do not create a custom fenv here, as the caller fenv is fine.
-        const tmpl = (try init(self.output.allocator)).push(l);
+        const tmpl = (try init(self.alloc)).push(l);
 
         // This is not a pcall because this already runs in a protected environment, and any errors
         // here should be propagated. There are also no defers here this would unwind past.
         c.lua_call(l, 1, 0);
 
         const output = try tmpl.getOutput(l);
-        defer self.output.allocator.free(output);
+        defer self.alloc.free(output);
 
         ffi.luaPushString(l, output);
         return 1;
@@ -887,16 +896,16 @@ pub const LTemplate = struct {
         c.lua_pushvalue(l, 2);
 
         // We do not create a custom fenv here, as the caller fenv is fine.
-        const tmpl = (try init(self.output.allocator)).push(l);
+        const tmpl = (try init(self.alloc)).push(l);
 
         // This is not a pcall because this already runs in a protected environment, and any errors
         // here should be propagated. There are also no defers here this would unwind past.
         c.lua_call(l, 1, 0);
 
         const output = try tmpl.getOutput(l);
-        defer self.output.allocator.free(output);
+        defer self.alloc.free(output);
 
-        try self.output.appendSlice(output);
+        try self.output.appendSlice(self.alloc, output);
         return 0;
     }
 

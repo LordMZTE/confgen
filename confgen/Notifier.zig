@@ -1,16 +1,10 @@
 const std = @import("std");
 
-const sigset = sigs: {
-    var set = std.posix.empty_sigset;
-    std.os.linux.sigaddset(&set, std.posix.SIG.INT);
-    std.os.linux.sigaddset(&set, std.posix.SIG.TERM);
-    break :sigs set;
-};
-
 inotifyfd: std.os.linux.fd_t,
 sigfd: std.os.linux.fd_t,
 watches: WatchesMap,
-inotifyrd: std.io.BufferedReader(1024 * 4, std.fs.File.Reader),
+inotifyrdbuf: [512]u8 = undefined,
+inotifyrd: std.fs.File.Reader,
 
 const WatchesMap = std.AutoHashMap(i32, []const u8);
 
@@ -21,7 +15,16 @@ pub const Event = union(enum) {
     file_changed: []const u8,
 };
 
-pub fn init(alloc: std.mem.Allocator) !Notifier {
+fn mkBlockedSigset() std.posix.sigset_t {
+    var set = std.posix.sigemptyset();
+    std.posix.sigaddset(&set, std.posix.SIG.INT);
+    std.posix.sigaddset(&set, std.posix.SIG.TERM);
+    return set;
+}
+
+/// Initialize a new Notifier. Caller asserts that `self`
+pub fn init(self: *Notifier, alloc: std.mem.Allocator) !void {
+    const sigset = mkBlockedSigset();
     std.posix.sigprocmask(std.posix.SIG.BLOCK, &sigset, null);
 
     const inotifyfd = try std.posix.inotify_init1(0);
@@ -30,15 +33,16 @@ pub fn init(alloc: std.mem.Allocator) !Notifier {
     const sigfd = try std.posix.signalfd(-1, &sigset, 0);
     errdefer std.posix.close(sigfd);
 
-    return .{
+    self.* = .{
         .inotifyfd = inotifyfd,
         .sigfd = sigfd,
         .watches = WatchesMap.init(alloc),
-        .inotifyrd = std.io.bufferedReader((std.fs.File{ .handle = inotifyfd }).reader()),
+        .inotifyrd = (std.fs.File{ .handle = inotifyfd }).reader(&self.inotifyrdbuf),
     };
 }
 
 pub fn deinit(self: *Notifier) void {
+    const sigset = mkBlockedSigset();
     std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &sigset, null);
 
     std.posix.close(self.inotifyfd);
@@ -77,21 +81,21 @@ pub fn next(self: *Notifier) !Event {
         .{ .fd = self.sigfd, .events = std.posix.POLL.IN, .revents = 0 },
     };
 
-    const pending_data = self.inotifyrd.start != self.inotifyrd.end;
+    const pending_data = self.inotifyrd.interface.bufferedLen() > 0;
 
     if (!pending_data)
         _ = try std.posix.poll(&pollfds, -1);
 
     if (pending_data or pollfds[0].revents == std.posix.POLL.IN) {
         var ev: std.os.linux.inotify_event = undefined;
-        try self.inotifyrd.reader().readNoEof(std.mem.asBytes(&ev));
+        try self.inotifyrd.interface.readSliceAll(std.mem.asBytes(&ev));
 
         // The inotify_event struct is optionally followed by ev.len bytes for the path name of
         // the watched file. We must read them here to avoid clobbering the next event.
         var name_buf: [std.fs.max_path_bytes]u8 = undefined;
         std.debug.assert(ev.len <= name_buf.len);
         if (ev.len > 0)
-            try self.inotifyrd.reader().readNoEof(name_buf[0..ev.len]);
+            try self.inotifyrd.interface.readSliceAll(name_buf[0..ev.len]);
 
         const dirpath = self.watches.get(ev.wd) orelse
             @panic("inotifyfd returned invalid handle");

@@ -43,7 +43,7 @@ pub fn logFn(
                 .err => "E: ",
             };
 
-            std.io.getStdErr().writer().print(scope_prefix ++ lvl_prefix ++ fmt ++ "\n", args) catch {};
+            std.debug.print(scope_prefix ++ lvl_prefix ++ fmt ++ "\n", args);
         },
     }
 }

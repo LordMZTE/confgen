@@ -31,7 +31,7 @@ pub const InitData = struct {
 };
 
 const fuse_op_impl = struct {
-    pub fn init(ci: ?*c.fuse_conn_info, cfg: ?*c.fuse_config) callconv(.C) ?*anyopaque {
+    pub fn init(ci: ?*c.fuse_conn_info, cfg: ?*c.fuse_config) callconv(.c) ?*anyopaque {
         var proto_major: u32 = undefined;
         var proto_minor: u32 = undefined;
         ffi.confgenfsGetFuseVersionFromConnInfo(ci.?, &proto_major, &proto_minor);
@@ -49,7 +49,7 @@ const fuse_op_impl = struct {
         // Without this, no attempts to read files with a reported size of 0 will be made.
         cfg.?.direct_io = 1;
 
-        const init_data: *InitData = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const init_data: *InitData = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const fs = init_data.alloc.create(FileSystem) catch |e| {
             init_data.err = e;
@@ -67,15 +67,15 @@ const fuse_op_impl = struct {
         return fs;
     }
 
-    pub fn destroy(udata: ?*anyopaque) callconv(.C) void {
-        const fs: *FileSystem = @alignCast(@ptrCast(udata));
+    pub fn destroy(udata: ?*anyopaque) callconv(.c) void {
+        const fs: *FileSystem = @ptrCast(@alignCast(udata));
         fs.deinit();
     }
 
-    pub fn open(path_p: ?[*:0]const u8, fi_r: ?*c.fuse_file_info) callconv(.C) c_int {
+    pub fn open(path_p: ?[*:0]const u8, fi_r: ?*c.fuse_file_info) callconv(.c) c_int {
         const fuse_ctx = c.fuse_get_context().*;
-        const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r.?));
-        const fs: *FileSystem = @alignCast(@ptrCast(fuse_ctx.private_data));
+        const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r.?));
+        const fs: *FileSystem = @ptrCast(@alignCast(fuse_ctx.private_data));
         const path = trimPath(path_p.?);
 
         const handle_idx = for (fs.handles, 0..) |h, i| {
@@ -139,10 +139,10 @@ const fuse_op_impl = struct {
         bufsiz: usize,
         offset: c_long,
         fi_r: ?*c.fuse_file_info,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         _ = path_p;
-        const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r.?));
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r.?));
+        const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const buf = buf_r.?[0..bufsiz];
 
@@ -168,12 +168,12 @@ const fuse_op_impl = struct {
         bufsiz: usize,
         offset: c_long,
         fi_r: ?*c.fuse_file_info,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         _ = path_p;
         _ = offset;
 
-        const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r));
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r));
+        const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const buf = buf_p.?[0..bufsiz];
 
@@ -191,10 +191,10 @@ const fuse_op_impl = struct {
         return 0;
     }
 
-    pub fn release(path_p: ?[*:0]const u8, fi_r: ?*c.fuse_file_info) callconv(.C) c_int {
+    pub fn release(path_p: ?[*:0]const u8, fi_r: ?*c.fuse_file_info) callconv(.c) c_int {
         _ = path_p;
-        const fi: *ffi.fuse_file_info = @alignCast(@ptrCast(fi_r));
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r));
+        const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         if (fs.handles[fi.fh]) |h| {
             defer {
@@ -220,7 +220,7 @@ const fuse_op_impl = struct {
         path_p: ?[*:0]const u8,
         stat_r: ?*c.struct_stat,
         fi: ?*c.fuse_file_info,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         _ = fi;
         const dir_mode = std.posix.S.IFDIR | 0o555;
 
@@ -230,7 +230,7 @@ const fuse_op_impl = struct {
             .gid = std.os.linux.getgid(),
         });
 
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const path = trimPath(path_p.?);
 
@@ -275,7 +275,7 @@ const fuse_op_impl = struct {
         offset: c_long,
         fi: ?*c.fuse_file_info,
         flags: c.fuse_readdir_flags,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         _ = offset;
         _ = fi;
         _ = flags;
@@ -285,7 +285,7 @@ const fuse_op_impl = struct {
         _ = filler.?(buf, ".", null, 0, 0);
         _ = filler.?(buf, "..", null, 0, 0);
 
-        const fs: *FileSystem = @alignCast(@ptrCast(c.fuse_get_context().*.private_data));
+        const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         if (std.mem.eql(u8, path, "_cgfs")) {
             _ = filler.?(buf, "eval", null, 0, 0);
@@ -325,16 +325,17 @@ inline fn errnoRet(e: std.posix.E) c_int {
     return -@as(c_int, @intCast(@intFromEnum(e)));
 }
 
-fn Cache(comptime V: type) type {
-    return std.HashMap([:0]const u8, V, struct {
-        pub fn hash(_: @This(), s: [:0]const u8) u64 {
-            return std.hash.Wyhash.hash(0, s);
-        }
+const CacheContext = struct {
+    pub fn hash(_: @This(), s: [:0]const u8) u64 {
+        return std.hash.Wyhash.hash(0, s);
+    }
 
-        pub fn eql(_: @This(), a: [:0]const u8, b: [:0]const u8) bool {
-            return std.mem.eql(u8, a, b);
-        }
-    }, std.hash_map.default_max_load_percentage);
+    pub fn eql(_: @This(), a: [:0]const u8, b: [:0]const u8) bool {
+        return std.mem.eql(u8, a, b);
+    }
+};
+fn Cache(comptime V: type) type {
+    return std.HashMapUnmanaged([:0]const u8, V, CacheContext, std.hash_map.default_max_load_percentage);
 }
 
 const FileMeta = struct {
@@ -384,8 +385,9 @@ fn init(init_data: InitData) !FileSystem {
     const cg_state = try init_data.alloc.create(libcg.luaapi.CgState);
     errdefer init_data.alloc.destroy(cg_state);
     cg_state.* = libcg.luaapi.CgState{
+        .alloc = init_data.alloc,
         .rootpath = std.fs.path.dirname(init_data.confgenfile) orelse ".",
-        .files = std.StringHashMap(libcg.luaapi.CgFile).init(init_data.alloc),
+        .files = .empty,
     };
     errdefer cg_state.deinit();
 
@@ -438,12 +440,12 @@ fn init(init_data: InitData) !FileSystem {
         .alloc = init_data.alloc,
         .cg_state = cg_state,
         .l = l,
-        .ttyconf = std.io.tty.detectConfig(std.io.getStdErr()),
-        .genbuf = std.ArrayList(u8).init(init_data.alloc),
-        .directory_cache = Cache(void).init(init_data.alloc),
-        .meta_cache = Cache(FileMeta).init(init_data.alloc),
+        .ttyconf = std.io.tty.detectConfig(std.fs.File.stderr()),
+        .genbuf = .empty,
+        .directory_cache = .empty,
+        .meta_cache = .empty,
         .data_cache = init_data.data_cache,
-        .handles = [1]?FileHandle{null} ** 512,
+        .handles = @splat(null),
     };
     errdefer self.deinit();
 
@@ -465,7 +467,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
         const cgfs_p = try self.alloc.dupeZ(u8, "_cgfs");
         errdefer self.alloc.free(cgfs_p);
 
-        try self.directory_cache.put(cgfs_p, {});
+        try self.directory_cache.put(self.alloc, cgfs_p, {});
     }
 
     var iter = self.cg_state.files.keyIterator();
@@ -482,8 +484,9 @@ fn computeDirectoryCache(self: *FileSystem) !void {
             const dirname_z: [:0]const u8 = @ptrCast(buf[0..dirname.len]);
 
             const res = try self.directory_cache.getOrPutAdapted(
+                self.alloc,
                 dirname_z,
-                self.directory_cache.ctx,
+                CacheContext{},
             );
             if (!res.found_existing) {
                 // TODO remove the entry again in case this allocation fails to not leave the map in
@@ -498,19 +501,19 @@ fn computeDirectoryCache(self: *FileSystem) !void {
 fn deinit(self: *FileSystem) void {
     self.cg_state.deinit();
     self.alloc.destroy(self.cg_state);
-    self.genbuf.deinit();
+    self.genbuf.deinit(self.alloc);
 
     var dircache_iter = self.directory_cache.keyIterator();
     while (dircache_iter.next()) |key| {
         self.alloc.free(key.*);
     }
-    self.directory_cache.deinit();
+    self.directory_cache.deinit(self.alloc);
 
     var metacache_iter = self.meta_cache.keyIterator();
     while (metacache_iter.next()) |key| {
         self.alloc.free(key.*);
     }
-    self.meta_cache.deinit();
+    self.meta_cache.deinit(self.alloc);
 
     for (self.handles) |maybe_handle| {
         if (maybe_handle) |handle| {
@@ -566,7 +569,7 @@ fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void 
     } else {
         const name_d = try self.alloc.dupeZ(u8, name);
         errdefer self.alloc.free(name_d);
-        try self.meta_cache.putNoClobber(name_d, meta);
+        try self.meta_cache.putNoClobber(self.alloc, name_d, meta);
     }
 }
 
@@ -590,8 +593,15 @@ fn generateCGFile(
 
             copy_mode = @truncate((try file.stat()).mode);
 
-            try file.reader().readAllArrayList(&self.genbuf, std.math.maxInt(usize));
-            content = self.genbuf.items;
+            var writer: std.Io.Writer.Allocating = .fromArrayList(self.alloc, &self.genbuf);
+            defer self.genbuf = writer.toArrayList();
+
+            var read_buf: [1024]u8 = undefined;
+            var reader = file.reader(&read_buf);
+
+            try writer.ensureTotalCapacity(64); // Without this, sendFileAll trips an assertion.
+            _ = try writer.writer.sendFileAll(&reader, .unlimited);
+            content = writer.written();
         },
     }
 
@@ -675,12 +685,13 @@ fn generateCGFile(
 }
 
 fn generateOptsJSON(self: *FileSystem) ![]const u8 {
-    var buf = std.ArrayList(u8).init(self.alloc);
+    var buf: std.Io.Writer.Allocating = .init(self.alloc);
     errdefer buf.deinit();
 
-    var wstream = std.json.WriteStream(@TypeOf(buf.writer()), .assumed_correct)
-        .init(self.alloc, buf.writer(), .{ .whitespace = .indent_2 });
-    defer wstream.deinit();
+    var wstream: std.json.Stringify = .{
+        .writer = &buf.writer,
+        .options = .{ .whitespace = .indent_2 },
+    };
 
     const lua_top = libcg.c.lua_gettop(self.l);
     defer libcg.c.lua_settop(self.l, lua_top);

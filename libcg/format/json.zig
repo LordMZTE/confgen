@@ -13,7 +13,7 @@ pub fn luaPush(l: *c.lua_State) void {
 }
 
 /// Writes a lua object to the stream. stream must be a json.WriteStream
-pub fn luaToJSON(l: *c.lua_State, stream: anytype) !void {
+pub fn luaToJSON(l: *c.lua_State, stream: *std.json.Stringify) !void {
     const ty = c.lua_type(l, -1);
     defer c.lua_pop(l, 1);
 
@@ -86,22 +86,17 @@ fn lSerialize(l: *c.lua_State) !c_int {
 
     const state = luaapi.getState(l);
 
-    // If you're doing more than 16KiB of JSON, open an issue
-    // and bring a VERY good explanation with you :D
-    var buf: [1024 * 16]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var writer: std.Io.Writer.Allocating = .init(state.alloc);
+    defer writer.deinit();
 
-    var wstream = std.json.WriteStream(@TypeOf(fbs.writer()), .assumed_correct).init(
-        state.files.allocator,
-        fbs.writer(),
-        .{ .whitespace = if (pretty) .indent_2 else .minified },
-    );
-    defer wstream.deinit();
+    var wstream: std.json.Stringify = .{
+        .writer = &writer.writer,
+        .options = .{ .whitespace = if (pretty) .indent_2 else .minified },
+    };
 
     c.lua_pushvalue(l, 1);
     try @import("json.zig").luaToJSON(l, &wstream);
 
-    const written = fbs.getWritten();
-    c.lua_pushlstring(l, written.ptr, written.len);
+    ffi.luaPushString(l, writer.written());
     return 1;
 }

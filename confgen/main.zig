@@ -80,6 +80,9 @@ pub fn main() u8 {
                 // We can't get the error message here as the Lua state will alread have been destroyed.
                 std.log.err("UNKNOWN LUA ERROR! THIS IS A BUG!", .{});
             },
+            error.RootfileExec => {
+                std.log.err("Couldn't run Confgenfile.", .{});
+            },
             else => {
                 std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
                 if (@errorReturnTrace()) |ert| std.debug.dumpStackTrace(ert.*);
@@ -105,11 +108,11 @@ pub fn run() !void {
     defer arg.deinit();
 
     if (arg.options.help) {
-        try std.io.getStdOut().writeAll(usage);
+        try std.fs.File.stdout().writeAll(usage);
         return;
     }
 
-    const ttyconf = std.io.tty.detectConfig(std.io.getStdErr());
+    const ttyconf = std.io.tty.detectConfig(std.fs.File.stderr());
 
     if (arg.options.compile) |filepath| {
         if (arg.positionals.len != 0) {
@@ -121,9 +124,24 @@ pub fn run() !void {
         defer file.close();
 
         const content = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+
         var errors: std.zig.ErrorBundle.Wip = undefined;
         try errors.init(alloc);
-        const tmpl = libcg.luagen.generateLua(alloc, &errors, content, filepath) catch |e| switch (e) {
+
+        var stdout_buf: [1024]u8 = undefined;
+        var stdout = std.fs.File.stderr().writer(&stdout_buf);
+
+        var literals: std.ArrayList([]const u8) = .empty;
+        defer literals.deinit(alloc);
+
+        libcg.luagen.generateLuaInto(
+            alloc,
+            &errors,
+            content,
+            filepath,
+            &stdout.interface,
+            &literals,
+        ) catch |e| switch (e) {
             error.Reported => {
                 var owned = try errors.toOwnedBundle("");
                 defer owned.deinit(alloc);
@@ -134,18 +152,16 @@ pub fn run() !void {
             },
             else => return e,
         };
-        defer tmpl.deinit();
         errors.deinit();
-
-        try std.io.getStdOut().writeAll(tmpl.content);
 
         return;
     }
 
     if (arg.options.@"json-opt") |cgfile| {
         var state = libcg.luaapi.CgState{
+            .alloc = alloc,
             .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-            .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
+            .files = .empty,
         };
         defer state.deinit();
 
@@ -165,10 +181,12 @@ pub fn run() !void {
             try libcg.luaapi.evalUserCode(l, code);
         }
 
-        var bufwriter = std.io.bufferedWriter(std.io.getStdOut().writer());
-        var wstream = std.json.WriteStream(@TypeOf(bufwriter.writer()), .assumed_correct)
-            .init(alloc, bufwriter.writer(), .{ .whitespace = .indent_2 });
-        defer wstream.deinit();
+        var write_buf: [512]u8 = undefined;
+        var writer = std.fs.File.stdout().writer(&write_buf);
+        var wstream: std.json.Stringify = .{
+            .writer = &writer.interface,
+            .options = .{ .whitespace = .indent_2 },
+        };
 
         libcg.c.lua_getglobal(l, "cg");
         libcg.c.lua_getfield(l, -1, "opt");
@@ -187,9 +205,8 @@ pub fn run() !void {
             try wstream.endObject();
         }
 
-        try bufwriter.writer().writeAll("\n");
-
-        try bufwriter.flush();
+        try writer.interface.writeByte('\n');
+        try writer.interface.flush();
 
         return;
     }
@@ -204,8 +221,9 @@ pub fn run() !void {
         }
 
         var state = libcg.luaapi.CgState{
+            .alloc = alloc,
             .rootpath = ".",
-            .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
+            .files = .empty,
         };
         defer state.deinit();
 
@@ -213,7 +231,7 @@ pub fn run() !void {
         defer libcg.c.lua_close(l);
         try libcg.luaapi.initLuaState(&state, l);
 
-        var content_buf = std.ArrayList(u8).init(alloc);
+        var content_buf: std.Io.Writer.Allocating = .init(alloc);
         defer content_buf.deinit();
 
         const cgfile = libcg.luaapi.CgFile{
@@ -248,7 +266,8 @@ pub fn run() !void {
 
         libcg.luaapi.callOnDoneCallbacks(l, false);
         if (arg.options.watch) {
-            var notif = try Notifier.init(alloc);
+            var notif: Notifier = undefined;
+            try Notifier.init(&notif, alloc);
             defer notif.deinit();
 
             try notif.addDir(std.fs.path.dirname(arg.positionals[0]) orelse ".");
@@ -308,8 +327,9 @@ pub fn run() !void {
     const output_abs = try std.fs.realpath(arg.positionals[1], &output_abs_buf);
 
     var state = libcg.luaapi.CgState{
+        .alloc = alloc,
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
-        .files = std.StringHashMap(libcg.luaapi.CgFile).init(alloc),
+        .files = .empty,
     };
     defer state.deinit();
 
@@ -329,7 +349,7 @@ pub fn run() !void {
         try libcg.luaapi.evalUserCode(l, code);
     }
 
-    var content_buf = std.ArrayList(u8).init(alloc);
+    var content_buf: std.Io.Writer.Allocating = .init(alloc);
     defer content_buf.deinit();
 
     {
@@ -367,7 +387,8 @@ pub fn run() !void {
     }
 
     if (arg.options.watch) {
-        var notif = try Notifier.init(alloc);
+        var notif: Notifier = undefined;
+        try Notifier.init(&notif, alloc);
         defer notif.deinit();
 
         {
@@ -473,7 +494,7 @@ fn genfile(
     l: *libcg.c.lua_State,
     errors: *std.zig.ErrorBundle.Wip,
     file: libcg.luaapi.CgFile,
-    content_buf: *std.ArrayList(u8),
+    content_buf: *std.Io.Writer.Allocating,
     outpath_root: []const u8,
     file_outpath: []const u8,
 ) !void {
@@ -531,9 +552,11 @@ fn genfile(
             const f = try std.fs.cwd().openFile(path, .{});
             defer f.close();
 
-            try f.reader().readAllArrayList(content_buf, std.math.maxInt(usize));
+            var read_buf: [512]u8 = undefined;
+            var reader = f.reader(&read_buf);
+            _ = try reader.interface.streamRemaining(&content_buf.writer);
 
-            content = content_buf.items;
+            content = content_buf.written();
         },
     }
 

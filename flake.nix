@@ -2,7 +2,6 @@
   description = "Config file template engine";
 
   inputs = {
-    # TODO: use unstable once zig 0.14 lands there
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     utils.url = "github:numtide/flake-utils";
   };
@@ -24,7 +23,7 @@
         dontConfigure = true;
 
         nativeBuildInputs = with pkgs; [
-          zig_0_14.hook
+          zig_0_15.hook
           pkg-config
         ];
 

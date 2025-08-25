@@ -45,22 +45,22 @@ fn lGetCallerCmd(l: *libcg.c.lua_State) !c_int {
     const file = try luaGetProcFile(l, "cmdline");
     defer file.close();
 
-    var readbuf = std.ArrayList(u8).init(std.heap.c_allocator);
-    defer readbuf.deinit();
+    var write_buf: [256]u8 = undefined;
+    var read_buf: [256]u8 = undefined;
 
-    var buf_reader = std.io.bufferedReader(file.reader());
+    var freader = file.reader(&read_buf);
+    var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     var i: c_int = 1;
     libcg.c.lua_newtable(l);
 
     while (true) {
         // Read & Push argument
-        buf_reader.reader().streamUntilDelimiter(readbuf.writer(), 0, null) catch |e| switch (e) {
-            error.EndOfStream => break,
-            else => return e,
-        };
-        libcg.ffi.luaPushString(l, readbuf.items);
-        readbuf.clearRetainingCapacity();
+        _ = try freader.interface.streamDelimiterEnding(&stack_writer.writer, 0);
+        if (freader.interface.bufferedLen() == 0) break;
+        freader.interface.toss(1);
+        try stack_writer.writer.flush();
+        stack_writer.concat();
 
         libcg.c.lua_rawseti(l, -2, i);
         i += 1;
@@ -73,32 +73,33 @@ fn lGetCallerEnv(l: *libcg.c.lua_State) !c_int {
     const file = try luaGetProcFile(l, "environ");
     defer file.close();
 
-    var readbuf = std.ArrayList(u8).init(std.heap.c_allocator);
-    defer readbuf.deinit();
+    var write_buf: [256]u8 = undefined;
+    var read_buf: [256]u8 = undefined;
 
-    var buf_reader = std.io.bufferedReader(file.reader());
+    var freader = file.reader(&read_buf);
+    var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     libcg.c.lua_newtable(l);
 
     while (true) {
         // Read & Push key
-        buf_reader.reader().streamUntilDelimiter(readbuf.writer(), '=', null) catch |e| switch (e) {
-            error.EndOfStream => break,
-            else => return e,
-        };
-        libcg.ffi.luaPushString(l, readbuf.items);
-        readbuf.clearRetainingCapacity();
+        _ = try freader.interface.streamDelimiterEnding(&stack_writer.writer, '=');
+        if (freader.interface.bufferedLen() == 0) {
+            // This only happens if the file is invalid. We just discard the last kv pair and break.
+            stack_writer.concat();
+            libcg.c.lua_pop(l, 1);
+            break;
+        }
+        freader.interface.toss(1);
+        try stack_writer.writer.flush();
+        stack_writer.concat();
 
         // Read & Push value
-        buf_reader.reader().streamUntilDelimiter(readbuf.writer(), 0, null) catch |e| {
-            libcg.c.lua_pop(l, 1);
-            switch (e) {
-                error.EndOfStream => break,
-                else => return e,
-            }
-        };
-        libcg.ffi.luaPushString(l, readbuf.items);
-        readbuf.clearRetainingCapacity();
+        _ = try freader.interface.streamDelimiterEnding(&stack_writer.writer, 0);
+        if (freader.interface.bufferedLen() == 0) break;
+        freader.interface.toss(1);
+        try stack_writer.writer.flush();
+        stack_writer.concat();
 
         libcg.c.lua_settable(l, -3);
     }

@@ -54,11 +54,33 @@ pub fn generateLua(
 ) Parser.Error!TemplateCode {
     errdefer alloc.free(src);
 
-    var outbuf = std.ArrayList(u8).init(alloc);
+    var outbuf = std.Io.Writer.Allocating.init(alloc);
     errdefer outbuf.deinit();
-    var literals = std.ArrayList([]const u8).init(alloc);
-    errdefer literals.deinit();
+    var literals = std.ArrayList([]const u8).empty;
+    errdefer literals.deinit(alloc);
 
+    generateLuaInto(alloc, errors, src, name, &outbuf.writer, &literals) catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory,
+        else => |er| return er,
+    };
+
+    return .{
+        .alloc = alloc,
+        .name = try alloc.dupeZ(u8, name),
+        .source = src,
+        .content = try outbuf.toOwnedSlice(),
+        .literals = try literals.toOwnedSlice(alloc),
+    };
+}
+
+pub fn generateLuaInto(
+    alloc: std.mem.Allocator,
+    errors: *std.zig.ErrorBundle.Wip,
+    src: []const u8,
+    name: []const u8,
+    tmplcode_writer: *std.Io.Writer,
+    literals: *std.ArrayList([]const u8),
+) (Parser.Error || std.Io.Writer.Error)!void {
     var parser = Parser{
         .str = src,
         .srcname = name,
@@ -68,30 +90,22 @@ pub fn generateLua(
     while (try parser.next()) |token| {
         switch (token.token_type) {
             .text => {
-                try literals.append(token.str);
-                try outbuf.writer().print(
+                try literals.append(alloc, token.str);
+                try tmplcode_writer.print(
                     "tmpl:pushLitIdx(tmplcode, {d})\n",
                     .{literals.items.len - 1},
                 );
             },
             .lua => {
-                try outbuf.appendSlice(token.str);
-                try outbuf.append('\n');
+                try tmplcode_writer.writeAll(token.str);
+                try tmplcode_writer.writeByte('\n');
             },
             .lua_literal => {
-                try outbuf.writer().print(
+                try tmplcode_writer.print(
                     "tmpl:pushValue({s})\n",
                     .{token.str},
                 );
             },
         }
     }
-
-    return .{
-        .alloc = alloc,
-        .name = try alloc.dupeZ(u8, name),
-        .source = src,
-        .content = try outbuf.toOwnedSlice(),
-        .literals = try literals.toOwnedSlice(),
-    };
 }

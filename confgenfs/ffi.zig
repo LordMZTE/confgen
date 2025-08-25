@@ -36,7 +36,7 @@ pub fn fuseLogFn(
     lvl: c.fuse_log_level,
     fmt: ?[*:0]const u8,
     args: ?*c.struct___va_list_tag_1,
-) callconv(.C) void {
+) callconv(.c) void {
     var buf: [1024]u8 = undefined;
     const ret = c.vsnprintf(&buf, buf.len, fmt.?, args.?);
 

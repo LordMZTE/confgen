@@ -68,7 +68,7 @@ pub fn run() !void {
     defer arg.deinit();
 
     if (arg.options.help) {
-        try std.io.getStdOut().writeAll(usage);
+        try std.fs.File.stdout().writeAll(usage);
         return;
     }
 
@@ -130,10 +130,10 @@ pub fn run() !void {
 
     // main loop
     {
-        const sigset = comptime sigs: {
-            var sigs = std.posix.empty_sigset;
-            std.os.linux.sigaddset(&sigs, std.os.linux.SIG.INT);
-            std.os.linux.sigaddset(&sigs, std.os.linux.SIG.TERM);
+        const sigset = sigs: {
+            var sigs = std.posix.sigemptyset();
+            std.posix.sigaddset(&sigs, std.os.linux.SIG.INT);
+            std.posix.sigaddset(&sigs, std.os.linux.SIG.TERM);
             break :sigs sigs;
         };
 
