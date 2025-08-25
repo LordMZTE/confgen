@@ -2,11 +2,11 @@
 pkgs.linkFarm "zig-packages" [
   # zig-args
   {
-    name = "args-0.0.0-CiLiqv_NAAC97fGpk9hS2K681jkiqPsWP6w3ucb_ctGH";
+    name = "args-0.0.0-CiLiqojRAACGzDRO7A9dw7kWSchNk29caJZkXuMCb0Cn";
     path = pkgs.fetchgit {
       url = "https://git.mzte.de/mirrors/zig-args.git";
-      rev = "9425b94c103a031777fdd272c555ce93a7dea581";
-      hash = "sha256-hlt4URhSb6g8y9hrR1gJ6Jw8rVbLXW50/iITzL0Vxgc=";
+      rev = "8ae26b44a884ff20dca98ee84c098e8f8e94902f";
+      hash = "sha256-LfUIqbHNS6DPvLV68Jxsz7OKJ9+y3ZOuvlja9whe9Wo=";
     };
   }
 ]

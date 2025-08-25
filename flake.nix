@@ -2,7 +2,7 @@
   description = "Config file template engine";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable-small"; # TODO: use unstable once Zig 0.15 hits
     utils.url = "github:numtide/flake-utils";
   };
 
@@ -38,7 +38,7 @@
       };
 
       devShells.default = pkgs.mkShell {
-        buildInputs = packages.default.buildInputs ++ (with pkgs; [ pkg-config ]);
+        buildInputs = packages.default.buildInputs ++ (with pkgs; [ zig_0_15 pkg-config ]);
       };
     });
 }
