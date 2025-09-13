@@ -3,8 +3,10 @@ const std = @import("std");
 inotifyfd: std.os.linux.fd_t,
 sigfd: std.os.linux.fd_t,
 watches: WatchesMap,
-inotifyrdbuf: [512]u8 = undefined,
-inotifyrd: std.fs.File.Reader,
+
+rdbuf: [@sizeOf(std.os.linux.inotify_event) + std.fs.max_path_bytes + 1]u8 = undefined,
+evstart: usize = 0,
+readend: usize = 0,
 
 const WatchesMap = std.AutoHashMap(i32, []const u8);
 
@@ -22,6 +24,8 @@ fn mkBlockedSigset() std.posix.sigset_t {
     return set;
 }
 
+const inotify_event = std.os.linux.inotify_event;
+
 /// Initialize a new Notifier. Caller asserts that `self`
 pub fn init(self: *Notifier, alloc: std.mem.Allocator) !void {
     const sigset = mkBlockedSigset();
@@ -37,7 +41,6 @@ pub fn init(self: *Notifier, alloc: std.mem.Allocator) !void {
         .inotifyfd = inotifyfd,
         .sigfd = sigfd,
         .watches = WatchesMap.init(alloc),
-        .inotifyrd = (std.fs.File{ .handle = inotifyfd }).reader(&self.inotifyrdbuf),
     };
 }
 
@@ -76,44 +79,23 @@ pub fn addDir(self: *Notifier, dirname: []const u8) !void {
 
 /// Caller must free returned memory.
 pub fn next(self: *Notifier) !Event {
+    if (self.readend - self.evstart > 0) {
+        // We have a buffered event
+        return self.takeEventFromBuffer();
+    }
+
     var pollfds = [2]std.posix.pollfd{
         .{ .fd = self.inotifyfd, .events = std.posix.POLL.IN, .revents = 0 },
         .{ .fd = self.sigfd, .events = std.posix.POLL.IN, .revents = 0 },
     };
 
-    const pending_data = self.inotifyrd.interface.bufferedLen() > 0;
+    _ = try std.posix.poll(&pollfds, -1);
 
-    if (!pending_data)
-        _ = try std.posix.poll(&pollfds, -1);
+    if (pollfds[0].revents == std.posix.POLL.IN) {
+        self.readend = try std.posix.read(self.inotifyfd, &self.rdbuf);
+        self.evstart = 0;
 
-    if (pending_data or pollfds[0].revents == std.posix.POLL.IN) {
-        var ev: std.os.linux.inotify_event = undefined;
-        try self.inotifyrd.interface.readSliceAll(std.mem.asBytes(&ev));
-
-        // The inotify_event struct is optionally followed by ev.len bytes for the path name of
-        // the watched file. We must read them here to avoid clobbering the next event.
-        var name_buf: [std.fs.max_path_bytes]u8 = undefined;
-        std.debug.assert(ev.len <= name_buf.len);
-        if (ev.len > 0)
-            try self.inotifyrd.interface.readSliceAll(name_buf[0..ev.len]);
-
-        const dirpath = self.watches.get(ev.wd) orelse
-            @panic("inotifyfd returned invalid handle");
-
-        // Required as padding bytes may be included in read value
-        const name = std.mem.sliceTo(&name_buf, 0);
-
-        return .{
-            .file_changed =
-            // This avoids inconsistent naming in the edge-case that we're observing the CWD
-            if (std.mem.eql(u8, dirpath, "."))
-                try self.watches.allocator.dupe(u8, name)
-            else
-                try std.fs.path.join(
-                    self.watches.allocator,
-                    &.{ dirpath, name },
-                ),
-        };
+        return try self.takeEventFromBuffer();
     }
     if (pollfds[1].revents == std.posix.POLL.IN) {
         var ev: std.os.linux.signalfd_siginfo = undefined;
@@ -123,4 +105,38 @@ pub fn next(self: *Notifier) !Event {
         return .quit;
     }
     @panic("poll returned incorrectly");
+}
+
+fn takeEventFromBuffer(self: *Notifier) !Event {
+    const slice = self.rdbuf[self.evstart..self.readend];
+    std.debug.assert(slice.len >= @sizeOf(inotify_event));
+
+    const ev = std.mem.bytesAsValue(
+        inotify_event,
+        slice[0..@sizeOf(inotify_event)],
+    );
+
+    self.evstart += @sizeOf(inotify_event) + ev.len;
+
+    // The inotify_event struct is optionally followed by ev.len bytes for the path name of
+    // the watched file. We must read them here to avoid clobbering the next event.
+    const name_padded = slice[@sizeOf(inotify_event)..][0..ev.len];
+
+    // Required as padding bytes may be included in read value
+    const name = std.mem.sliceTo(name_padded, 0);
+
+    const dirpath = self.watches.get(ev.wd) orelse
+        unreachable; // inotifyfd returned invalid handle
+
+    return .{
+        .file_changed =
+        // This avoids inconsistent naming in the edge-case that we're observing the CWD
+        if (std.mem.eql(u8, dirpath, "."))
+            try self.watches.allocator.dupe(u8, name)
+        else
+            try std.fs.path.join(
+                self.watches.allocator,
+                &.{ dirpath, name },
+            ),
+    };
 }
