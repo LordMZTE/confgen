@@ -124,12 +124,13 @@ pub fn run() !void {
         defer file.close();
 
         const content = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+        defer alloc.free(content);
 
         var errors: std.zig.ErrorBundle.Wip = undefined;
         try errors.init(alloc);
 
         var stdout_buf: [1024]u8 = undefined;
-        var stdout = std.fs.File.stderr().writer(&stdout_buf);
+        var stdout = std.fs.File.stdout().writer(&stdout_buf);
 
         var literals: std.ArrayList([]const u8) = .empty;
         defer literals.deinit(alloc);
@@ -153,6 +154,8 @@ pub fn run() !void {
             else => return e,
         };
         errors.deinit();
+
+        try stdout.interface.flush();
 
         return;
     }
