@@ -2,7 +2,7 @@
   description = "Config file template engine";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable-small"; # TODO: use unstable once Zig 0.15 hits
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     utils.url = "github:numtide/flake-utils";
   };
 
@@ -20,8 +20,6 @@
         name = "confgen";
         src = ./.;
 
-        dontConfigure = true;
-
         nativeBuildInputs = with pkgs; [
           zig_0_15.hook
           pkg-config
@@ -32,7 +30,7 @@
           fuse3
         ];
 
-        postPatch = ''
+        preBuild = ''
           ln -sf "${deps}" "$ZIG_GLOBAL_CACHE_DIR/p"
         '';
       };
