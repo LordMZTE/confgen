@@ -10,12 +10,6 @@ comptime {
     }
 }
 
-pub const std_options = std.Options{
-    .log_level = if (@import("builtin").mode == .Debug) .debug else .info,
-
-    .logFn = libcg.logFn,
-};
-
 const Args = struct {
     /// Compile template to Lua for debugging.
     compile: ?[]const u8 = null,
@@ -56,8 +50,8 @@ const usage =
     \\
 ;
 
-pub fn main() u8 {
-    run() catch |e| {
+pub fn main(init: std.process.Init) u8 {
+    run(init) catch |e| {
         switch (e) {
             error.InvalidArguments => {
                 std.log.err(
@@ -94,25 +88,14 @@ pub fn main() u8 {
     return 0;
 }
 
-pub fn run() !void {
-    var debug_gpa = if (@import("builtin").mode == .Debug) std.heap.DebugAllocator(.{}){} else {};
-    defer if (@TypeOf(debug_gpa) != void) {
-        _ = debug_gpa.deinit();
-    };
-    const alloc = if (@TypeOf(debug_gpa) != void)
-        debug_gpa.allocator()
-    else
-        std.heap.c_allocator;
-
-    const arg = try args.parseForCurrentProcess(Args, alloc, .print);
+pub fn run(init: std.process.Init) !void {
+    const arg = try args.parseForCurrentProcess(Args, init, .print);
     defer arg.deinit();
 
     if (arg.options.help) {
-        try std.fs.File.stdout().writeAll(usage);
+        try std.Io.File.stdout().writeStreamingAll(init.io, usage);
         return;
     }
-
-    const ttyconf = std.io.tty.detectConfig(std.fs.File.stderr());
 
     if (arg.options.compile) |filepath| {
         if (arg.positionals.len != 0) {
@@ -120,23 +103,23 @@ pub fn run() !void {
             return error.InvalidArguments;
         }
 
-        const file = try std.fs.cwd().openFile(filepath, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(init.io, filepath, .{});
+        defer file.close(init.io);
 
-        const content = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
-        defer alloc.free(content);
+        const content = try file.readToEndAlloc(init.gpa, std.math.maxInt(usize));
+        defer init.gpa.free(content);
 
         var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(alloc);
+        try errors.init(init.gpa);
 
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.fs.File.stdout().writer(&stdout_buf);
 
         var literals: std.ArrayList([]const u8) = .empty;
-        defer literals.deinit(alloc);
+        defer literals.deinit(init.gpa);
 
         libcg.luagen.generateLuaInto(
-            alloc,
+            init.gpa,
             &errors,
             content,
             filepath,
@@ -145,10 +128,10 @@ pub fn run() !void {
         ) catch |e| switch (e) {
             error.Reported => {
                 var owned = try errors.toOwnedBundle("");
-                defer owned.deinit(alloc);
+                defer owned.deinit(init.gpa);
 
                 std.log.err("parsing template:", .{});
-                owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                owned.renderToStderr(.{}, .auto);
                 return error.Explained;
             },
             else => return e,
@@ -162,7 +145,7 @@ pub fn run() !void {
 
     if (arg.options.@"json-opt") |cgfile| {
         var state = libcg.luaapi.CgState{
-            .alloc = alloc,
+            .alloc = init.gpa,
             .rootpath = std.fs.path.dirname(cgfile) orelse ".",
             .files = .empty,
         };
@@ -224,7 +207,7 @@ pub fn run() !void {
         }
 
         var state = libcg.luaapi.CgState{
-            .alloc = alloc,
+            .alloc = init.gpa,
             .rootpath = ".",
             .files = .empty,
         };
@@ -234,7 +217,7 @@ pub fn run() !void {
         defer libcg.c.lua_close(l);
         try libcg.luaapi.initLuaState(&state, l);
 
-        var content_buf: std.Io.Writer.Allocating = .init(alloc);
+        var content_buf: std.Io.Writer.Allocating = .init(init.gpa);
         defer content_buf.deinit();
 
         const cgfile = libcg.luaapi.CgFile{
@@ -243,9 +226,9 @@ pub fn run() !void {
         };
 
         var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(alloc);
+        try errors.init(init.gpa);
         genfile(
-            alloc,
+            init.gpa,
             l,
             &errors,
             cgfile,
@@ -255,10 +238,10 @@ pub fn run() !void {
         ) catch |e| switch (e) {
             error.Reported => {
                 var bundle = try errors.toOwnedBundle("");
-                defer bundle.deinit(alloc);
+                defer bundle.deinit(init.gpa);
 
                 std.log.err("reported errors:", .{});
-                bundle.renderToStdErr(.{ .ttyconf = ttyconf });
+                bundle.renderToStderr(.{}, .auto);
             },
             else => {
                 errors.deinit();
@@ -270,7 +253,7 @@ pub fn run() !void {
         libcg.luaapi.callOnDoneCallbacks(l, false);
         if (arg.options.watch) {
             var notif: Notifier = undefined;
-            try Notifier.init(&notif, alloc);
+            try Notifier.init(&notif, init.gpa);
             defer notif.deinit();
 
             try notif.addDir(std.fs.path.dirname(arg.positionals[0]) orelse ".");
@@ -278,13 +261,13 @@ pub fn run() !void {
             while (true) switch (try notif.next()) {
                 .quit => break,
                 .file_changed => |p| {
-                    defer alloc.free(p);
+                    defer init.gpa.free(p);
                     if (!std.mem.eql(u8, p, arg.positionals[0])) continue;
 
                     var errorb: std.zig.ErrorBundle.Wip = undefined;
-                    try errorb.init(alloc);
+                    try errorb.init(init.gpa);
                     genfile(
-                        alloc,
+                        init.gpa,
                         l,
                         &errorb,
                         cgfile,
@@ -294,9 +277,9 @@ pub fn run() !void {
                     ) catch |e| {
                         if (e == error.Reported) {
                             var owned = try errorb.toOwnedBundle("");
-                            defer owned.deinit(alloc);
+                            defer owned.deinit(init.gpa);
 
-                            owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                            owned.renderToStderr(.{}, .auto);
                         }
                         std.log.err("generating {s}: {}", .{ arg.positionals[1], e });
                     };
@@ -330,7 +313,7 @@ pub fn run() !void {
     const output_abs = try std.fs.realpath(arg.positionals[1], &output_abs_buf);
 
     var state = libcg.luaapi.CgState{
-        .alloc = alloc,
+        .alloc = init.gpa,
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
         .files = .empty,
     };
@@ -352,20 +335,20 @@ pub fn run() !void {
         try libcg.luaapi.evalUserCode(l, code);
     }
 
-    var content_buf: std.Io.Writer.Allocating = .init(alloc);
+    var content_buf: std.Io.Writer.Allocating = .init(init.gpa);
     defer content_buf.deinit();
 
     {
         var errors = false;
         var errorb: std.zig.ErrorBundle.Wip = undefined;
-        try errorb.init(alloc);
+        try errorb.init(init.gpa);
         var iter = state.files.iterator();
         while (iter.next()) |kv| {
             const outpath = kv.key_ptr.*;
             const file = kv.value_ptr.*;
 
             genfile(
-                alloc,
+                init.gpa,
                 l,
                 &errorb,
                 file,
@@ -379,11 +362,11 @@ pub fn run() !void {
         }
 
         var errorbo = try errorb.toOwnedBundle("");
-        defer errorbo.deinit(alloc);
+        defer errorbo.deinit(init.gpa);
 
         if (errorbo.extra.len != 0) {
             std.log.err("reported errors:", .{});
-            errorbo.renderToStdErr(.{ .ttyconf = ttyconf });
+            errorbo.renderToStderr(.{}, .auto);
         }
 
         libcg.luaapi.callOnDoneCallbacks(l, errors);
@@ -391,7 +374,7 @@ pub fn run() !void {
 
     if (arg.options.watch) {
         var notif: Notifier = undefined;
-        try Notifier.init(&notif, alloc);
+        try Notifier.init(&notif, init.gpa);
         defer notif.deinit();
 
         {
@@ -409,7 +392,7 @@ pub fn run() !void {
         while (true) switch (try notif.next()) {
             .quit => break,
             .file_changed => |p| {
-                defer alloc.free(p);
+                defer init.gpa.free(p);
 
                 if (std.mem.eql(u8, p, cgfile)) {
                     std.log.info("Confgenfile changed; re-evaluating", .{});
@@ -424,8 +407,8 @@ pub fn run() !void {
                     {
                         var iter = state.files.iterator();
                         while (iter.next()) |kv| {
-                            alloc.free(kv.key_ptr.*);
-                            kv.value_ptr.deinit(alloc);
+                            init.gpa.free(kv.key_ptr.*);
+                            kv.value_ptr.deinit(init.gpa);
                         }
                         state.files.clearRetainingCapacity();
                     }
@@ -465,9 +448,9 @@ pub fn run() !void {
 
                     if (std.mem.eql(u8, kv.value_ptr.content.path, p)) {
                         var errors: std.zig.ErrorBundle.Wip = undefined;
-                        try errors.init(alloc);
+                        try errors.init(init.gpa);
                         genfile(
-                            alloc,
+                            init.gpa,
                             l,
                             &errors,
                             kv.value_ptr.*,
@@ -477,10 +460,10 @@ pub fn run() !void {
                         ) catch |e| {
                             if (e == error.Reported) {
                                 var owned = try errors.toOwnedBundle("");
-                                defer owned.deinit(alloc);
+                                defer owned.deinit(init.gpa);
 
                                 std.log.err("reported errors:", .{});
-                                owned.renderToStdErr(.{ .ttyconf = ttyconf });
+                                owned.renderToStderr(.{}, .auto);
                             }
                             std.log.err("generating {s}: {}", .{ p, e });
                         };

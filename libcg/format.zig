@@ -1,6 +1,5 @@
 const std = @import("std");
-const ffi = @import("ffi.zig");
-const c = ffi.c;
+const c = @import("c");
 
 pub const formats = struct {
     pub const json = @import("format/json.zig");

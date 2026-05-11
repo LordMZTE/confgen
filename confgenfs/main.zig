@@ -1,7 +1,7 @@
 const std = @import("std");
 const libcg = @import("libcg");
 const args = @import("args");
-const c = ffi.c;
+const c = @import("c");
 
 const ffi = @import("ffi.zig");
 
@@ -34,13 +34,8 @@ const usage =
     \\
 ;
 
-pub const std_options = std.Options{
-    .log_level = if (@import("builtin").mode == .Debug) .debug else .info,
-    .logFn = libcg.logFn,
-};
-
-pub fn main() u8 {
-    run() catch |e| {
+pub fn main(init: std.process.Init) u8 {
+    run(init) catch |e| {
         switch (e) {
             error.InvalidArguments => std.log.err("Invalid Arguments.\n{s}", .{usage}),
             error.MountFailed => std.log.err("Failed to mount the filesystem.", .{}),
@@ -54,21 +49,12 @@ pub fn main() u8 {
     return 0;
 }
 
-pub fn run() !void {
-    var debug_gpa = if (@import("builtin").mode == .Debug) std.heap.DebugAllocator(.{}).init else {};
-    defer if (@TypeOf(debug_gpa) != void) {
-        _ = debug_gpa.deinit();
-    };
-    const alloc = if (@TypeOf(debug_gpa) != void)
-        debug_gpa.allocator()
-    else
-        std.heap.c_allocator;
-
-    const arg = try args.parseForCurrentProcess(Args, alloc, .print);
+pub fn run(init: std.process.Init) !void {
+    const arg = try args.parseForCurrentProcess(Args, init, .print);
     defer arg.deinit();
 
     if (arg.options.help) {
-        try std.fs.File.stdout().writeAll(usage);
+        try std.Io.File.stdout().writeStreamingAll(init.io, usage);
         return;
     }
 
@@ -82,11 +68,12 @@ pub fn run() !void {
     const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
     defer libcg.c.lua_close(l);
 
-    var data_cache = DataCache.empty;
-    defer data_cache.deinit(alloc);
+    var data_cache: DataCache = .empty;
+    defer data_cache.deinit(init.gpa);
 
-    var init_data = FileSystem.InitData{
-        .alloc = alloc,
+    var init_data: FileSystem.InitData = .{
+        .alloc = init.gpa,
+        .io = init.io,
         .confgenfile = arg.positionals[0],
         .eval = arg.options.eval,
         .post_eval = arg.options.@"post-eval",
@@ -97,8 +84,8 @@ pub fn run() !void {
         .err = null,
     };
 
-    const fuse_argv = try alloc.alloc([*:0]const u8, arg.positionals.len - 1);
-    defer alloc.free(fuse_argv);
+    const fuse_argv = try init.gpa.alloc([*:0]const u8, arg.positionals.len - 1);
+    defer init.gpa.free(fuse_argv);
 
     fuse_argv[0] = "confgenfs";
     for (arg.positionals[2..], fuse_argv[1..]) |cg_arg, *fuse_arg| {
@@ -140,10 +127,10 @@ pub fn run() !void {
         // use a sigfd to handle signals
         std.posix.sigprocmask(std.posix.SIG.BLOCK, &sigset, null);
         const sigfd = try std.posix.signalfd(-1, &sigset, 0);
-        defer std.posix.close(sigfd);
+        defer _ = std.posix.system.close(sigfd);
 
-        const datacache_tfd = try std.posix.timerfd_create(.MONOTONIC, .{});
-        defer std.posix.close(datacache_tfd);
+        const datacache_tfd: libcg.posix.TimerFd = try .init(.MONOTONIC, 0);
+        defer datacache_tfd.deinit();
 
         var fuse_buf = c.fuse_buf{};
         // There is a fuse_buf_free function, but that's internal for some reason.
@@ -166,7 +153,7 @@ pub fn run() !void {
             .events = std.posix.POLL.IN,
             .revents = 0,
         }, .{
-            .fd = datacache_tfd,
+            .fd = datacache_tfd.handle,
             .events = std.posix.POLL.IN,
             .revents = 0,
         } };
@@ -213,10 +200,10 @@ pub fn run() !void {
             // need to tick the data cache
             if (pollfds[2].revents != 0) {
                 var nexpirations: u64 = undefined;
-                std.debug.assert(try std.posix.read(datacache_tfd, std.mem.asBytes(&nexpirations)) == 8);
+                std.debug.assert(try std.posix.read(datacache_tfd.handle, std.mem.asBytes(&nexpirations)) == 8);
 
                 cache_timer_next = null;
-                data_cache.tick(alloc);
+                data_cache.tick(init.gpa);
             }
 
             if (data_cache.next_time != std.math.maxInt(i64)) {

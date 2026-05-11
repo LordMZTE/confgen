@@ -1,6 +1,6 @@
 const std = @import("std");
 const libcg = @import("libcg");
-const c = ffi.c;
+const c = @import("c");
 
 const ffi = @import("ffi.zig");
 
@@ -20,6 +20,7 @@ pub const fuse_ops = ops: {
 /// Data passed to the FUSE init function.
 pub const InitData = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     confgenfile: [:0]const u8,
     eval: ?[]const u8,
     post_eval: ?[]const u8,
@@ -88,7 +89,7 @@ const fuse_op_impl = struct {
 
         fs.handles[handle_idx] = if (std.mem.eql(u8, path, "_cgfs/eval")) blk: {
             if (fi.flags.ACCMODE != .WRONLY) return errnoRet(.ACCES);
-            break :blk .{ .special_eval = .{} };
+            break :blk .{ .special_eval = .empty };
         } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
@@ -222,12 +223,12 @@ const fuse_op_impl = struct {
         fi: ?*c.fuse_file_info,
     ) callconv(.c) c_int {
         _ = fi;
+        const stat = stat_r.?;
         const dir_mode = std.posix.S.IFDIR | 0o555;
 
-        const stat: *std.posix.Stat = @ptrCast(stat_r.?);
-        stat.* = std.mem.zeroInit(std.posix.Stat, .{
-            .uid = std.os.linux.getuid(),
-            .gid = std.os.linux.getgid(),
+        stat.* = std.mem.zeroInit(c.struct_stat, .{
+            .st_uid = std.os.linux.getuid(),
+            .st_gid = std.os.linux.getgid(),
         });
 
         const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
@@ -235,18 +236,18 @@ const fuse_op_impl = struct {
         const path = trimPath(path_p.?);
 
         if (path.len == 0) {
-            stat.mode = dir_mode;
-            stat.nlink = 2;
+            stat.st_mode = dir_mode;
+            stat.st_nlink = 2;
             return 0;
         }
 
         if (std.mem.eql(u8, path, "_cgfs/eval")) {
-            stat.mode = std.posix.S.IFREG | 0o644;
-            stat.nlink = 1;
+            stat.st_mode = std.posix.S.IFREG | 0o644;
+            stat.st_nlink = 1;
             return 0;
         } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) {
-            stat.mode = std.posix.S.IFREG | 0o444;
-            stat.nlink = 1;
+            stat.st_mode = std.posix.S.IFREG | 0o444;
+            stat.st_nlink = 1;
             return 0;
         }
 
@@ -255,12 +256,12 @@ const fuse_op_impl = struct {
                 std.log.err("getting file meta: {}", .{e});
                 return errnoRet(.IO);
             };
-            stat.mode = std.posix.S.IFREG | meta.mode;
-            stat.size = @intCast(meta.size);
-            stat.nlink = 1;
+            stat.st_mode = std.posix.S.IFREG | meta.mode;
+            stat.st_size = @intCast(meta.size);
+            stat.st_nlink = 1;
         } else if (fs.directory_cache.contains(path)) {
-            stat.mode = dir_mode;
-            stat.nlink = 2;
+            stat.st_mode = dir_mode;
+            stat.st_nlink = 2;
         } else {
             return errnoRet(.NOENT);
         }
@@ -357,12 +358,12 @@ const FileHandle = union(enum) {
 };
 
 alloc: std.mem.Allocator,
+io: std.Io,
 cg_state: *libcg.luaapi.CgState,
 l: *libcg.c.lua_State,
-ttyconf: std.io.tty.Config,
 
 /// A buffer used for temporary storage during file generation. It is re-used.
-genbuf: std.ArrayList(u8),
+genbuf: std.Io.Writer.Allocating,
 
 /// A set containing all directories.
 directory_cache: Cache(void),
@@ -386,12 +387,13 @@ fn init(init_data: InitData) !FileSystem {
     errdefer init_data.alloc.destroy(cg_state);
     cg_state.* = libcg.luaapi.CgState{
         .alloc = init_data.alloc,
+        .io = init_data.io,
         .rootpath = std.fs.path.dirname(init_data.confgenfile) orelse ".",
         .files = .empty,
     };
     errdefer cg_state.deinit();
 
-    try std.posix.chdir(cg_state.rootpath);
+    try std.process.setCurrentPath(cg_state.io, cg_state.rootpath);
 
     const l = init_data.l;
     try libcg.luaapi.initLuaState(cg_state, l);
@@ -438,9 +440,9 @@ fn init(init_data: InitData) !FileSystem {
 
     var self = FileSystem{
         .alloc = init_data.alloc,
+        .io = init_data.io,
         .cg_state = cg_state,
         .l = l,
-        .ttyconf = std.io.tty.detectConfig(std.fs.File.stderr()),
         .genbuf = .empty,
         .directory_cache = .empty,
         .meta_cache = .empty,
@@ -501,7 +503,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
 fn deinit(self: *FileSystem) void {
     self.cg_state.deinit();
     self.alloc.destroy(self.cg_state);
-    self.genbuf.deinit(self.alloc);
+    self.genbuf.deinit();
 
     var dircache_iter = self.directory_cache.keyIterator();
     while (dircache_iter.next()) |key| {
@@ -538,7 +540,7 @@ fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) 
             switch (cgf.content) {
                 .string => |s| meta.size = s.len,
                 .path => |content_path| {
-                    const stat = try std.fs.cwd().statFile(content_path);
+                    const stat = try std.Io.Dir.cwd().statFile(self.io, content_path, .{});
                     meta.mode = @truncate(stat.mode);
                     meta.mode &= 0o555; // read-only
                     meta.size = stat.size;
@@ -588,20 +590,17 @@ fn generateCGFile(
         // CgFile points to a file on disk, read it.
         .path => |rel_path| {
             self.genbuf.clearRetainingCapacity();
-            var file = try std.fs.cwd().openFile(rel_path, .{});
-            defer file.close();
+            var file = try std.Io.Dir.cwd().openFile(self.io, rel_path, .{});
+            defer file.close(self.io);
 
-            copy_mode = @truncate((try file.stat()).mode);
-
-            var writer: std.Io.Writer.Allocating = .fromArrayList(self.alloc, &self.genbuf);
-            defer self.genbuf = writer.toArrayList();
+            copy_mode = @intFromEnum((try file.stat(self.io)).permissions);
 
             var read_buf: [1024]u8 = undefined;
             var reader = file.reader(&read_buf);
 
-            try writer.ensureTotalCapacity(64); // Without this, sendFileAll trips an assertion.
-            _ = try writer.writer.sendFileAll(&reader, .unlimited);
-            content = writer.written();
+            try self.genbuf.ensureTotalCapacity(64); // Without this, sendFileAll trips an assertion.
+            _ = try self.genbuf.writer.sendFileAll(&reader, .unlimited);
+            content = self.genbuf.writer.written();
         },
     }
 
@@ -630,7 +629,7 @@ fn generateCGFile(
             defer owned.deinit(self.alloc);
 
             std.log.err("parsing template:", .{});
-            owned.renderToStdErr(.{ .ttyconf = self.ttyconf });
+            owned.renderToStderr(.{}, .auto);
             return error.Reported;
         },
         else => return e,

@@ -1,10 +1,5 @@
 const std = @import("std");
-
-pub const c = @cImport({
-    @cInclude("lua.h");
-    @cInclude("lauxlib.h");
-    @cInclude("lualib.h");
-});
+const c = @import("c");
 
 /// Generates a wrapper function with error handling for a lua CFunction
 pub fn luaFunc(comptime func: anytype) c.lua_CFunction {

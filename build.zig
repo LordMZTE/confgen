@@ -15,16 +15,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }).module("args");
 
-    const libcg = b.createModule(.{
-        .root_source_file = b.path("libcg/main.zig"),
-        .link_libc = true,
-        // required for luajit errors
-        .unwind_tables = .async,
+    const libcg_cimport = b.addTranslateC(.{
+        .root_source_file = b.path("libcg/c.h"),
         .target = target,
         .optimize = optimize,
     });
 
-    libcg.linkSystemLibrary("luajit", .{});
+    libcg_cimport.linkSystemLibrary("luajit", .{});
+
+    const libcg = b.createModule(.{
+        .root_source_file = b.path("libcg/main.zig"),
+        // required for luajit errors
+        .unwind_tables = .async,
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "c", .module = libcg_cimport.createModule() },
+        },
+    });
 
     const libcg_test = b.addTest(.{ .root_module = libcg, .name = "libcg test" });
 
@@ -68,6 +76,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(confgen_test).step);
 
     if (enable_confgenfs) {
+        const cgfs_cimport = b.addTranslateC(.{
+            .root_source_file = b.path("confgenfs/c.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        cgfs_cimport.linkSystemLibrary("fuse3", .{});
+
         const confgenfs = b.addModule("confgenfs", .{
             .root_source_file = b.path("confgenfs/main.zig"),
             .link_libc = true,
@@ -76,8 +91,11 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "args", .module = zig_args },
                 .{ .name = "libcg", .module = libcg },
+                .{ .name = "c", .module = cgfs_cimport.createModule() },
             },
         });
+
+        // needed for fuse_shim.c
         confgenfs.linkSystemLibrary("fuse3", .{});
         confgenfs.addCSourceFile(.{
             .file = b.path("confgenfs/fuse_shim.c"),

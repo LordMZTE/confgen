@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = ffi.c;
+const c = @import("c");
 
 const Parser = @import("Parser.zig");
 

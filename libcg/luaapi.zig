@@ -1,6 +1,6 @@
 const std = @import("std");
 const ffi = @import("ffi.zig");
-const c = ffi.c;
+const c = @import("c");
 
 const format = @import("format.zig");
 const luagen = @import("luagen.zig");
@@ -16,6 +16,7 @@ const iters_alive_errmsg = "Cannot add file as file iterators are still alive!";
 
 pub const CgState = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
 
     rootpath: []const u8,
     files: std.StringHashMapUnmanaged(CgFile),
@@ -251,20 +252,28 @@ fn lPrint(l: *c.lua_State) !c_int {
     const nargs = c.lua_gettop(l);
 
     var write_buf: [128]u8 = undefined;
-    var fwriter = std.fs.File.stderr().writer(&write_buf);
-    var writer = &fwriter.interface;
+    const t = std.debug.lockStderr(&write_buf).terminal();
+    defer std.debug.unlockStderr();
 
-    try writer.writeAll("\x1b[1;34mL:\x1b[0m ");
+    try t.setColor(.blue);
+    try t.setColor(.bold);
+    try t.writer.writeAll("lua");
+    try t.setColor(.reset);
+
+    try t.setColor(.dim);
+    try t.setColor(.bold);
+    try t.writer.writeAll(": ");
+    try t.setColor(.reset);
 
     for (0..@intCast(nargs)) |i| {
         const s = ffi.luaConvertString(l, @intCast(i + 1));
-        try writer.writeAll(s);
+        try t.writer.writeAll(s);
         if (i + 1 != nargs)
-            try writer.writeByte('\t');
+            try t.writer.writeByte('\t');
     }
 
-    try writer.writeByte('\n');
-    try writer.flush();
+    try t.writer.writeByte('\n');
+    try t.writer.flush();
     return 0;
 }
 
@@ -314,13 +323,13 @@ fn lAddPath(l: *c.lua_State) !c_int {
         return error.LuaError;
     }
 
-    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+    var dir = try std.Io.Dir.cwd().openDir(state.io, path, .{ .iterate = true });
+    defer dir.close(state.io);
 
     var iter = try dir.walk(state.alloc);
     defer iter.deinit();
 
-    while (try iter.next()) |entry| {
+    while (try iter.next(state.io)) |entry| {
         if (entry.kind == .directory)
             continue;
 
@@ -514,10 +523,11 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
     }
 
     {
-        const file_content = try std.fs.cwd().readFileAlloc(
-            state.alloc,
+        const file_content = try std.Io.Dir.cwd().readFileAlloc(
+            state.io,
             inpath,
-            std.math.maxInt(usize),
+            state.alloc,
+            .unlimited,
         );
         var errors: std.zig.ErrorBundle.Wip = undefined;
         try errors.init(state.alloc);
@@ -589,7 +599,7 @@ fn processTmplLoadErr(
             var write_buf: [256]u8 = undefined;
             var writer: ffi.StackWriter = .init(l, &write_buf);
             try writer.writer.writeAll("parsing template:\n");
-            try errors.renderToWriter(.{ .ttyconf = .no_color }, &writer.writer);
+            try errors.renderToWriter(.{}, &writer.writer);
             try writer.writer.flush();
 
             writer.concat();

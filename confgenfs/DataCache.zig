@@ -1,6 +1,7 @@
 //! A data structure used to cache file content for a given time, after which it is freed.
 
 const std = @import("std");
+const libcg = @import("libcg");
 
 pub const Entry = struct {
     freetime: i64,
@@ -55,14 +56,11 @@ pub fn put(self: *@This(), alloc: std.mem.Allocator, path: []const u8, ent: Entr
     self.next_time = @min(self.next_time, ent.freetime);
 }
 
-pub fn armTimerFD(self: *const @This(), tfd: std.posix.fd_t) !void {
-    try std.posix.timerfd_settime(tfd, .{ .ABSTIME = true }, &.{
-        .it_value = .{
-            .sec = @divTrunc(self.next_time, std.time.ms_per_s),
-            .nsec = @mod(self.next_time, 1000) * std.time.ns_per_ms,
-        },
-        .it_interval = .{ .sec = 0, .nsec = 0 },
-    }, null);
+pub fn armTimerFD(self: *const @This(), tfd: libcg.posix.TimerFd) !void {
+    try tfd.setTime(.{
+        .sec = @divTrunc(self.next_time, std.time.ms_per_s),
+        .nsec = @mod(self.next_time, 1000) * std.time.ns_per_ms,
+    }, .{ .sec = 0, .nsec = 0 }, .{ .ABSTIME = true });
 }
 
 pub fn now() i64 {
