@@ -7,7 +7,7 @@
 }:
 let
   pname = "confgen";
-  version = "0.8.2";
+  version = "0.8.3";
   src = ./.;
   deps = zig_0_16.fetchDeps {
     inherit pname version src;
