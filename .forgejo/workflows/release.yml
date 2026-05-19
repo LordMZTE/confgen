@@ -9,6 +9,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need entire history for git-cliff
 
       - name: Setup Zig
         uses: actions/setup-zig@v2
@@ -30,9 +32,19 @@ jobs:
           cd zig-out
           zip -r ../release/confgen-linux-x86_64.zip .
 
+      - name: Create Changelog
+        uses: actions/git-cliff@v4
+        with:
+          config: ""
+          args: --verbose --latest
+          github_token: ""
+        env:
+          OUTPUT: CHANGELOG.md
+
       - name: Upload
-        uses: actions/forgejo-release@v1
+        uses: actions/forgejo-release@v2
         with:
           direction: upload
           release-dir: release
           token: ${{ env.GITHUB_TOKEN }}
+          release-notes-file: CHANGELOG.md
