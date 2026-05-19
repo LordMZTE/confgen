@@ -2,7 +2,7 @@
 //! Used by the --json-opt flag
 const std = @import("std");
 const ffi = @import("../ffi.zig");
-const c = ffi.c;
+const c = @import("c");
 
 const luaapi = @import("../luaapi.zig");
 

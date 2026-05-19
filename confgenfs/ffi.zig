@@ -1,16 +1,10 @@
 const std = @import("std");
-pub const c = @cImport({
-    @cDefine("FUSE_USE_VERSION", "35");
-
-    @cInclude("fuse.h");
-    @cInclude("fuse_lowlevel.h");
-    @cInclude("stdio.h");
-});
+const c = @import("c");
 
 // translate-c fails to translate this properly as it contains a bitfield.
 pub const fuse_file_info = extern struct {
     flags: std.posix.O,
-    bitfield: packed struct {
+    bitfield: packed struct(u64) {
         writepage: u1,
         direct_io: u1,
         keep_cache: u1,

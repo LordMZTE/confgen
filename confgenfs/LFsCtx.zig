@@ -1,8 +1,6 @@
 const std = @import("std");
-const c = ffi.c;
+const c = @import("c");
 const libcg = @import("libcg");
-
-const ffi = @import("ffi.zig");
 
 pub const lua_registry_key = "confgenfs_fsctx";
 
@@ -42,13 +40,15 @@ pub fn initMetatable(l: *libcg.c.lua_State) void {
 }
 
 fn lGetCallerCmd(l: *libcg.c.lua_State) !c_int {
-    const file = try luaGetProcFile(l, "cmdline");
-    defer file.close();
+    const state = libcg.luaapi.getState(l);
 
-    var write_buf: [256]u8 = undefined;
-    var read_buf: [256]u8 = undefined;
+    const file = try luaGetProcFile(l, state.io, "cmdline");
+    defer file.close(state.io);
 
-    var freader = file.reader(&read_buf);
+    var write_buf: [512]u8 = undefined;
+    var read_buf: [512]u8 = undefined;
+
+    var freader = file.reader(state.io, &read_buf);
     var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     var i: c_int = 1;
@@ -70,13 +70,15 @@ fn lGetCallerCmd(l: *libcg.c.lua_State) !c_int {
 }
 
 fn lGetCallerEnv(l: *libcg.c.lua_State) !c_int {
-    const file = try luaGetProcFile(l, "environ");
-    defer file.close();
+    const state = libcg.luaapi.getState(l);
+
+    const file = try luaGetProcFile(l, state.io, "environ");
+    defer file.close(state.io);
 
     var write_buf: [256]u8 = undefined;
     var read_buf: [256]u8 = undefined;
 
-    var freader = file.reader(&read_buf);
+    var freader = file.reader(state.io, &read_buf);
     var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     libcg.c.lua_newtable(l);
@@ -107,13 +109,13 @@ fn lGetCallerEnv(l: *libcg.c.lua_State) !c_int {
     return 1;
 }
 
-fn luaGetProcFile(l: *libcg.c.lua_State, name: []const u8) !std.fs.File {
+fn luaGetProcFile(l: *libcg.c.lua_State, io: std.Io, name: []const u8) !std.Io.File {
     libcg.c.lua_getfield(l, 1, "pid");
     const pid = libcg.c.lua_tointeger(l, -1);
     libcg.c.lua_pop(l, 1);
 
     var fname_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const fname = try std.fmt.bufPrintZ(&fname_buf, "/proc/{}/{s}", .{ pid, name });
+    const fname = try std.fmt.bufPrint(&fname_buf, "/proc/{}/{s}", .{ pid, name });
 
-    return try std.fs.openFileAbsoluteZ(fname.ptr, .{});
+    return try std.Io.Dir.openFileAbsolute(io, fname, .{});
 }

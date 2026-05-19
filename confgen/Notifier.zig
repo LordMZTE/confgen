@@ -1,4 +1,5 @@
 const std = @import("std");
+const libcg = @import("libcg");
 
 inotifyfd: std.os.linux.fd_t,
 sigfd: std.os.linux.fd_t,
@@ -31,8 +32,8 @@ pub fn init(self: *Notifier, alloc: std.mem.Allocator) !void {
     const sigset = mkBlockedSigset();
     std.posix.sigprocmask(std.posix.SIG.BLOCK, &sigset, null);
 
-    const inotifyfd = try std.posix.inotify_init1(0);
-    errdefer std.posix.close(inotifyfd);
+    const inotifyfd = try libcg.posix.inotifyInit();
+    errdefer _ = std.posix.system.close(inotifyfd);
 
     const sigfd = try std.posix.signalfd(-1, &sigset, 0);
     errdefer std.posix.close(sigfd);
@@ -48,8 +49,8 @@ pub fn deinit(self: *Notifier) void {
     const sigset = mkBlockedSigset();
     std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &sigset, null);
 
-    std.posix.close(self.inotifyfd);
-    std.posix.close(self.sigfd);
+    _ = std.posix.system.close(self.inotifyfd);
+    _ = std.posix.system.close(self.sigfd);
 
     var w_iter = self.watches.iterator();
     while (w_iter.next()) |wkv| {
@@ -59,7 +60,7 @@ pub fn deinit(self: *Notifier) void {
 }
 
 pub fn addDir(self: *Notifier, dirname: []const u8) !void {
-    const fd = std.posix.inotify_add_watch(
+    const fd = libcg.posix.inotifyAddWatch(
         self.inotifyfd,
         dirname,
         std.os.linux.IN.MASK_CREATE | std.os.linux.IN.ONLYDIR | std.os.linux.IN.CLOSE_WRITE,
@@ -67,7 +68,7 @@ pub fn addDir(self: *Notifier, dirname: []const u8) !void {
         error.WatchAlreadyExists => return,
         else => return e,
     };
-    errdefer std.posix.inotify_rm_watch(self.inotifyfd, fd);
+    errdefer _ = std.posix.system.inotify_rm_watch(self.inotifyfd, fd);
 
     const dir_d = try self.watches.allocator.dupe(u8, dirname);
     errdefer self.watches.allocator.free(dir_d);
