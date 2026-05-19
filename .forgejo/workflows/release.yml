@@ -18,7 +18,7 @@ jobs:
       - name: Setup Packages
         run: |
           apt update
-          apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-3 zip
+          apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-4 zip
 
       - name: Build
         run: |
