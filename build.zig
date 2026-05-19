@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) void {
     const confgen_exe = b.addExecutable(.{
         .name = "confgen",
         .root_module = confgen,
-        .use_llvm = true, // self-hosted crashes
     });
 
     b.installArtifact(confgen_exe);
@@ -104,7 +103,6 @@ pub fn build(b: *std.Build) void {
         const confgenfs_exe = b.addExecutable(.{
             .name = "confgenfs",
             .root_module = confgenfs,
-            .use_llvm = true, // self-hosted crashes
         });
 
         b.installArtifact(confgenfs_exe);

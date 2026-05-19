@@ -10,5 +10,10 @@ pub const posix = @import("posix.zig");
 pub const Parser = @import("Parser.zig");
 
 test {
-    std.testing.refAllDecls(@This());
+    _ = ffi;
+    _ = format;
+    _ = luaapi;
+    _ = luagen;
+    _ = posix;
+    _ = Parser;
 }

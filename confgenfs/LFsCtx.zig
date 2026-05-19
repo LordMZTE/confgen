@@ -43,12 +43,12 @@ fn lGetCallerCmd(l: *libcg.c.lua_State) !c_int {
     const state = libcg.luaapi.getState(l);
 
     const file = try luaGetProcFile(l, state.io, "cmdline");
-    defer file.close();
+    defer file.close(state.io);
 
-    var write_buf: [256]u8 = undefined;
-    var read_buf: [256]u8 = undefined;
+    var write_buf: [512]u8 = undefined;
+    var read_buf: [512]u8 = undefined;
 
-    var freader = file.reader(&read_buf);
+    var freader = file.reader(state.io, &read_buf);
     var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     var i: c_int = 1;
@@ -73,12 +73,12 @@ fn lGetCallerEnv(l: *libcg.c.lua_State) !c_int {
     const state = libcg.luaapi.getState(l);
 
     const file = try luaGetProcFile(l, state.io, "environ");
-    defer file.close();
+    defer file.close(state.io);
 
     var write_buf: [256]u8 = undefined;
     var read_buf: [256]u8 = undefined;
 
-    var freader = file.reader(&read_buf);
+    var freader = file.reader(state.io, &read_buf);
     var stack_writer: libcg.ffi.StackWriter = .init(l, &write_buf);
 
     libcg.c.lua_newtable(l);
@@ -117,5 +117,5 @@ fn luaGetProcFile(l: *libcg.c.lua_State, io: std.Io, name: []const u8) !std.Io.F
     var fname_buf: [std.fs.max_path_bytes]u8 = undefined;
     const fname = try std.fmt.bufPrint(&fname_buf, "/proc/{}/{s}", .{ pid, name });
 
-    return try std.Io.Dir.openFileAbsolute(io, fname.ptr, .{});
+    return try std.Io.Dir.openFileAbsolute(io, fname, .{});
 }

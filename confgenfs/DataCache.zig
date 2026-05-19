@@ -64,6 +64,6 @@ pub fn armTimerFD(self: *const @This(), tfd: libcg.posix.TimerFd) !void {
 }
 
 pub fn now() i64 {
-    const now_ts = std.posix.clock_gettime(.MONOTONIC) catch return 0;
+    const now_ts = libcg.posix.clockGetTime(.MONOTONIC) catch return 0;
     return now_ts.sec * std.time.ms_per_s + @divTrunc(now_ts.nsec, std.time.ns_per_ms);
 }

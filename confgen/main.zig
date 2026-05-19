@@ -4,10 +4,8 @@ const libcg = @import("libcg");
 
 const Notifier = @import("Notifier.zig");
 
-comptime {
-    if (@import("builtin").is_test) {
-        std.testing.refAllDeclsRecursive(@This());
-    }
+test {
+    _ = Notifier;
 }
 
 const Args = struct {
@@ -79,7 +77,7 @@ pub fn main(init: std.process.Init) u8 {
             },
             else => {
                 std.log.err("UNEXPECTED: {s}", .{@errorName(e)});
-                if (@errorReturnTrace()) |ert| std.debug.dumpStackTrace(ert.*);
+                if (@errorReturnTrace()) |ert| std.debug.dumpErrorReturnTrace(ert);
             },
         }
         return 1;
@@ -106,14 +104,15 @@ pub fn run(init: std.process.Init) !void {
         const file = try std.Io.Dir.cwd().openFile(init.io, filepath, .{});
         defer file.close(init.io);
 
-        const content = try file.readToEndAlloc(init.gpa, std.math.maxInt(usize));
+        var reader = file.reader(init.io, &.{});
+        const content = try reader.interface.allocRemaining(init.gpa, .unlimited);
         defer init.gpa.free(content);
 
         var errors: std.zig.ErrorBundle.Wip = undefined;
         try errors.init(init.gpa);
 
         var stdout_buf: [1024]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
+        var stdout = std.Io.File.stdout().writer(init.io, &stdout_buf);
 
         var literals: std.ArrayList([]const u8) = .empty;
         defer literals.deinit(init.gpa);
@@ -131,7 +130,7 @@ pub fn run(init: std.process.Init) !void {
                 defer owned.deinit(init.gpa);
 
                 std.log.err("parsing template:", .{});
-                owned.renderToStderr(.{}, .auto);
+                try owned.renderToStderr(init.io, .{}, .auto);
                 return error.Explained;
             },
             else => return e,
@@ -144,14 +143,15 @@ pub fn run(init: std.process.Init) !void {
     }
 
     if (arg.options.@"json-opt") |cgfile| {
-        var state = libcg.luaapi.CgState{
+        var state: libcg.luaapi.CgState = .{
             .alloc = init.gpa,
+            .io = init.io,
             .rootpath = std.fs.path.dirname(cgfile) orelse ".",
             .files = .empty,
         };
         defer state.deinit();
 
-        try std.posix.chdir(state.rootpath);
+        try std.process.setCurrentPath(init.io, state.rootpath);
 
         const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
         defer libcg.c.lua_close(l);
@@ -168,7 +168,7 @@ pub fn run(init: std.process.Init) !void {
         }
 
         var write_buf: [512]u8 = undefined;
-        var writer = std.fs.File.stdout().writer(&write_buf);
+        var writer = std.Io.File.stdout().writer(init.io, &write_buf);
         var wstream: std.json.Stringify = .{
             .writer = &writer.interface,
             .options = .{ .whitespace = .indent_2 },
@@ -206,8 +206,9 @@ pub fn run(init: std.process.Init) !void {
             return error.InvalidArguments;
         }
 
-        var state = libcg.luaapi.CgState{
+        var state: libcg.luaapi.CgState = .{
             .alloc = init.gpa,
+            .io = init.io,
             .rootpath = ".",
             .files = .empty,
         };
@@ -229,6 +230,7 @@ pub fn run(init: std.process.Init) !void {
         try errors.init(init.gpa);
         genfile(
             init.gpa,
+            init.io,
             l,
             &errors,
             cgfile,
@@ -241,7 +243,7 @@ pub fn run(init: std.process.Init) !void {
                 defer bundle.deinit(init.gpa);
 
                 std.log.err("reported errors:", .{});
-                bundle.renderToStderr(.{}, .auto);
+                try bundle.renderToStderr(init.io, .{}, .auto);
             },
             else => {
                 errors.deinit();
@@ -268,6 +270,7 @@ pub fn run(init: std.process.Init) !void {
                     try errorb.init(init.gpa);
                     genfile(
                         init.gpa,
+                        init.io,
                         l,
                         &errorb,
                         cgfile,
@@ -279,7 +282,7 @@ pub fn run(init: std.process.Init) !void {
                             var owned = try errorb.toOwnedBundle("");
                             defer owned.deinit(init.gpa);
 
-                            owned.renderToStderr(.{}, .auto);
+                            try owned.renderToStderr(init.io, .{}, .auto);
                         }
                         std.log.err("generating {s}: {}", .{ arg.positionals[1], e });
                     };
@@ -297,29 +300,36 @@ pub fn run(init: std.process.Init) !void {
     }
 
     var cgfile_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
-    const cgfile_nosentinel = try std.fs.realpath(
+    const cgfile_len = try std.Io.Dir.cwd().realPathFile(
+        init.io,
         arg.positionals[0],
         cgfile_buf[0 .. cgfile_buf.len - 1],
     );
-    cgfile_buf[cgfile_nosentinel.len] = 0; // Is guaranteed to be in bounds
-    const cgfile: [:0]u8 = @ptrCast(cgfile_nosentinel);
+    cgfile_buf[cgfile_len] = 0; // Is guaranteed to be in bounds
+    const cgfile: [:0]u8 = @ptrCast(cgfile_buf[0..cgfile_len]);
 
-    std.fs.cwd().makeDir(arg.positionals[1]) catch |e| switch (e) {
+    std.Io.Dir.cwd().createDir(init.io, arg.positionals[1], .fromMode(0o755)) catch |e| switch (e) {
         error.PathAlreadyExists => {},
         else => return e,
     };
 
     var output_abs_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const output_abs = try std.fs.realpath(arg.positionals[1], &output_abs_buf);
+    const output_abs_len = try std.Io.Dir.cwd().realPathFile(
+        init.io,
+        arg.positionals[1],
+        &output_abs_buf,
+    );
+    const output_abs = output_abs_buf[0..output_abs_len];
 
-    var state = libcg.luaapi.CgState{
+    var state: libcg.luaapi.CgState = .{
         .alloc = init.gpa,
+        .io = init.io,
         .rootpath = std.fs.path.dirname(cgfile) orelse ".",
         .files = .empty,
     };
     defer state.deinit();
 
-    try std.posix.chdir(state.rootpath);
+    try std.process.setCurrentPath(init.io, state.rootpath);
 
     var l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
     defer libcg.c.lua_close(l);
@@ -349,6 +359,7 @@ pub fn run(init: std.process.Init) !void {
 
             genfile(
                 init.gpa,
+                init.io,
                 l,
                 &errorb,
                 file,
@@ -366,7 +377,7 @@ pub fn run(init: std.process.Init) !void {
 
         if (errorbo.extra.len != 0) {
             std.log.err("reported errors:", .{});
-            errorbo.renderToStderr(.{}, .auto);
+            try errorbo.renderToStderr(init.io, .{}, .auto);
         }
 
         libcg.luaapi.callOnDoneCallbacks(l, errors);
@@ -451,6 +462,7 @@ pub fn run(init: std.process.Init) !void {
                         try errors.init(init.gpa);
                         genfile(
                             init.gpa,
+                            init.io,
                             l,
                             &errors,
                             kv.value_ptr.*,
@@ -463,7 +475,7 @@ pub fn run(init: std.process.Init) !void {
                                 defer owned.deinit(init.gpa);
 
                                 std.log.err("reported errors:", .{});
-                                owned.renderToStderr(.{}, .auto);
+                                try owned.renderToStderr(init.io, .{}, .auto);
                             }
                             std.log.err("generating {s}: {}", .{ p, e });
                         };
@@ -477,6 +489,7 @@ pub fn run(init: std.process.Init) !void {
 
 fn genfile(
     alloc: std.mem.Allocator,
+    io: std.Io,
     l: *libcg.c.lua_State,
     errors: *std.zig.ErrorBundle.Wip,
     file: libcg.luaapi.CgFile,
@@ -500,7 +513,7 @@ fn genfile(
         defer alloc.free(to_path);
 
         if (std.fs.path.dirname(to_path)) |dir| {
-            try std.fs.cwd().makePath(dir);
+            try std.Io.Dir.cwd().createDirPath(io, dir);
         }
 
         switch (file.content) {
@@ -511,14 +524,14 @@ fn genfile(
                 );
                 defer alloc.free(from_path);
 
-                try std.fs.cwd().copyFile(from_path, std.fs.cwd(), to_path, .{});
+                try std.Io.Dir.cwd().copyFile(from_path, std.Io.Dir.cwd(), to_path, io, .{});
             },
 
             .string => |s| {
-                var outfile = try std.fs.cwd().createFile(to_path, .{});
-                defer outfile.close();
+                var outfile = try std.Io.Dir.cwd().createFile(io, to_path, .{});
+                defer outfile.close(io);
 
-                try outfile.writeAll(s);
+                try outfile.writeStreamingAll(io, s);
             },
         }
 
@@ -535,11 +548,11 @@ fn genfile(
             const path = try std.fs.path.resolve(alloc, &.{ state.rootpath, p });
             defer alloc.free(path);
 
-            const f = try std.fs.cwd().openFile(path, .{});
-            defer f.close();
+            const f = try std.Io.Dir.cwd().openFile(io, path, .{});
+            defer f.close(io);
 
             var read_buf: [512]u8 = undefined;
-            var reader = f.reader(&read_buf);
+            var reader = f.reader(io, &read_buf);
             _ = try reader.interface.streamRemaining(&content_buf.writer);
 
             content = content_buf.written();
@@ -565,11 +578,13 @@ fn genfile(
     defer alloc.free(path);
 
     if (std.fs.path.dirname(path)) |dir| {
-        try std.fs.cwd().makePath(dir);
+        try std.Io.Dir.cwd().createDirPath(io, dir);
     }
 
-    var outfile = try std.fs.cwd().createFile(path, .{ .mode = out.mode });
-    defer outfile.close();
+    var outfile = try std.Io.Dir.cwd().createFile(io, path, .{
+        .permissions = .fromMode(out.mode),
+    });
+    defer outfile.close(io);
 
-    try outfile.writeAll(out.content);
+    try outfile.writeStreamingAll(io, out.content);
 }

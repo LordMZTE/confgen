@@ -406,10 +406,11 @@ fn init(init_data: InitData) !FileSystem {
         // path and fallback to the unmodified path if that fails.
         const mountpoint = if (std.fs.path.isAbsolute(init_data.mountpoint))
             init_data.mountpoint
-        else if (std.fs.cwd().realpathZ(
+        else if (std.Io.Dir.cwd().realPathFile(
+            cg_state.io,
             init_data.mountpoint,
             &realpath_buf,
-        )) |rp| rp else |e| fallb: {
+        )) |rp| realpath_buf[0..rp] else |e| fallb: {
             std.log.warn("failed to get real mountpoint: {}", .{e});
             break :fallb init_data.mountpoint;
         };
@@ -443,7 +444,7 @@ fn init(init_data: InitData) !FileSystem {
         .io = init_data.io,
         .cg_state = cg_state,
         .l = l,
-        .genbuf = .empty,
+        .genbuf = .init(init_data.alloc),
         .directory_cache = .empty,
         .meta_cache = .empty,
         .data_cache = init_data.data_cache,
@@ -541,7 +542,7 @@ fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) 
                 .string => |s| meta.size = s.len,
                 .path => |content_path| {
                     const stat = try std.Io.Dir.cwd().statFile(self.io, content_path, .{});
-                    meta.mode = @truncate(stat.mode);
+                    meta.mode = @truncate(stat.permissions.toMode());
                     meta.mode &= 0o555; // read-only
                     meta.size = stat.size;
                 },
@@ -593,14 +594,14 @@ fn generateCGFile(
             var file = try std.Io.Dir.cwd().openFile(self.io, rel_path, .{});
             defer file.close(self.io);
 
-            copy_mode = @intFromEnum((try file.stat(self.io)).permissions);
+            copy_mode = @truncate((try file.stat(self.io)).permissions.toMode());
 
             var read_buf: [1024]u8 = undefined;
-            var reader = file.reader(&read_buf);
+            var reader = file.reader(self.io, &read_buf);
 
             try self.genbuf.ensureTotalCapacity(64); // Without this, sendFileAll trips an assertion.
             _ = try self.genbuf.writer.sendFileAll(&reader, .unlimited);
-            content = self.genbuf.writer.written();
+            content = self.genbuf.writer.buffered();
         },
     }
 
@@ -629,7 +630,7 @@ fn generateCGFile(
             defer owned.deinit(self.alloc);
 
             std.log.err("parsing template:", .{});
-            owned.renderToStderr(.{}, .auto);
+            try owned.renderToStderr(self.io, .{}, .auto);
             return error.Reported;
         },
         else => return e,

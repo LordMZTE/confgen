@@ -99,3 +99,44 @@ pub const TimerFd = struct {
         }
     }
 };
+
+pub fn clockGetTime(clock: std.os.linux.clockid_t) !std.os.linux.timespec {
+    var out: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(clock, &out);
+    switch (std.os.linux.errno(rc)) {
+        .SUCCESS => return out,
+        .ACCES => return error.PermissionDenied,
+        else => |errno| return std.posix.unexpectedErrno(errno),
+    }
+}
+
+pub fn inotifyInit() !std.posix.fd_t {
+    const rc = std.os.linux.inotify_init1(0);
+
+    switch (std.os.linux.errno(rc)) {
+        .SUCCESS => return @truncate(@as(isize, @bitCast(rc))),
+        .MFILE => return error.ProcessFdQuoteExceeded,
+        .NFILE => return error.SystemFdQuoteExceeded,
+        .NOMEM => return error.OutOfMemory,
+        else => |errno| return std.posix.unexpectedErrno(errno),
+    }
+}
+
+pub fn inotifyAddWatch(fd: std.posix.fd_t, dirname: []const u8, mask: u32) !std.posix.fd_t {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    std.debug.assert(dirname.len < buf.len); // paths should never exceed max path length
+    @memcpy(buf[0..dirname.len], dirname);
+    buf[dirname.len] = 0;
+
+    const rc = std.os.linux.inotify_add_watch(fd, @ptrCast(&buf), mask);
+    switch (std.os.linux.errno(rc)) {
+        .SUCCESS => return @truncate(@as(isize, @bitCast(rc))),
+        .ACCES => return error.PermissionDenied,
+        .EXIST => return error.WatchAlreadyExists,
+        .MFILE, .NOSPC => return error.ProcessFdQuoteExceeded,
+        .NFILE => return error.SystemFdQuoteExceeded,
+        .NOMEM => return error.OutOfMemory,
+        .NOTDIR => return error.NotADirectory,
+        else => |errno| return std.posix.unexpectedErrno(errno),
+    }
+}
