@@ -20,7 +20,9 @@ jobs:
       - name: Setup Packages
         run: |
           apt update
-          apt install -y ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-4 zip
+          apt install -y \
+            ca-certificates libluajit-5.1-dev libluajit-5.1-2 liblua5.1-0-dev libfuse3-dev libfuse3-4 \
+            zip jq # jq needed for git-cliff
 
       - name: Build
         run: |
@@ -33,18 +35,19 @@ jobs:
           zip -r ../release/confgen-linux-x86_64.zip .
 
       - name: Create Changelog
+        id: changelog
         uses: actions/git-cliff@v4
         with:
           config: ""
           args: --verbose --latest
-          github_token: ""
+          github_token: "${{ secrets.GH_TOKEN }}"
         env:
           OUTPUT: CHANGELOG.md
 
       - name: Upload
-        uses: actions/forgejo-release@v2
+        uses: actions/forgejo-release@main
         with:
           direction: upload
           release-dir: release
           token: ${{ env.GITHUB_TOKEN }}
-          release-notes-file: CHANGELOG.md
+          release-notes-file: ${{ steps.changelog.outputs.changelog }}
