@@ -66,7 +66,7 @@ pub fn generateLua(
 
     return .{
         .alloc = alloc,
-        .name = try alloc.dupeZ(u8, name),
+        .name = try alloc.dupeSentinel(u8, name, 0),
         .source = src,
         .content = try outbuf.toOwnedSlice(),
         .literals = try literals.toOwnedSlice(alloc),

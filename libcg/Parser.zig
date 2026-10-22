@@ -197,7 +197,7 @@ fn reportMismOpenDelimErr(
 
     if (open_pos) |opos| {
         const note_start = try self.errors.reserveNotes(1);
-        const noteref = @intFromEnum(try self.errors.addErrorMessage(.{
+        const noteref = @backingInt(try self.errors.addErrorMessage(.{
             .msg = try self.errors.printString(
                 "Opening {s} delimiter here",
                 .{open_type.nameString()},
@@ -243,7 +243,7 @@ fn reportInvalCloseDelim(
         0;
 
     if (open_pos) |opos| {
-        const noteref = @intFromEnum(try self.errors.addErrorMessage(.{
+        const noteref = @backingInt(try self.errors.addErrorMessage(.{
             .msg = try self.errors.printString(
                 "Mismatched open {s} delimiter here",
                 .{open_type.?.nameString()},
@@ -255,7 +255,7 @@ fn reportInvalCloseDelim(
     }
 
     if (maybe_tip) |tip| {
-        const noteref = @intFromEnum(try self.errors.addErrorMessage(.{
+        const noteref = @backingInt(try self.errors.addErrorMessage(.{
             .msg = try self.errors.addString(tip),
         }));
         self.errors.extra.items[note_i] = noteref;
@@ -284,8 +284,7 @@ test "lua literal" {
         \\bla
     ;
 
-    var errors: std.zig.ErrorBundle.Wip = undefined;
-    try errors.init(std.testing.allocator);
+    var errors: std.zig.ErrorBundle.Wip = try .init(std.testing.allocator);
     defer errors.deinit();
 
     var parser = Parser{
@@ -311,8 +310,7 @@ test "lua" {
         \\bla
     ;
 
-    var errors: std.zig.ErrorBundle.Wip = undefined;
-    try errors.init(std.testing.allocator);
+    var errors: std.zig.ErrorBundle.Wip = try .init(std.testing.allocator);
     defer errors.deinit();
 
     var parser = Parser{
@@ -329,4 +327,38 @@ test "lua" {
     try std.testing.expectEqual(@as(?Token, null), try parser.next());
 
     try std.testing.expectEqual(0, errors.tmpBundle().errorMessageCount());
+}
+
+test "unclosed delimiter" {
+    const input = "<% test";
+
+    var errors: std.zig.ErrorBundle.Wip = try .init(std.testing.allocator);
+    {
+        errdefer errors.deinit();
+
+        var parser = Parser{
+            .str = input,
+            .srcname = "test",
+            .errors = &errors,
+            .pos = 0,
+        };
+
+        try std.testing.expectError(error.Reported, parser.next());
+    }
+
+    var errb = try errors.toOwnedBundle("");
+    defer errb.deinit(std.testing.allocator);
+
+    var err_writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err_writer.deinit();
+
+    try errb.renderToWriter(.{}, &err_writer.writer);
+
+    try std.testing.expectEqual(1, errb.errorMessageCount());
+    try std.testing.expectEqualStrings(
+        \\test:1:1: error: Unclosed lua literal delimiter
+        \\<% test
+        \\^~
+        \\
+    , err_writer.written());
 }

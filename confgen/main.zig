@@ -108,8 +108,7 @@ pub fn run(init: std.process.Init) !void {
         const content = try reader.interface.allocRemaining(init.gpa, .unlimited);
         defer init.gpa.free(content);
 
-        var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(init.gpa);
+        var errors: std.zig.ErrorBundle.Wip = try .init(init.gpa);
 
         var stdout_buf: [1024]u8 = undefined;
         var stdout = std.Io.File.stdout().writer(init.io, &stdout_buf);
@@ -226,8 +225,7 @@ pub fn run(init: std.process.Init) !void {
             .copy = false,
         };
 
-        var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(init.gpa);
+        var errors: std.zig.ErrorBundle.Wip = try .init(init.gpa);
         genfile(
             init.gpa,
             init.io,
@@ -266,8 +264,7 @@ pub fn run(init: std.process.Init) !void {
                     defer init.gpa.free(p);
                     if (!std.mem.eql(u8, p, arg.positionals[0])) continue;
 
-                    var errorb: std.zig.ErrorBundle.Wip = undefined;
-                    try errorb.init(init.gpa);
+                    var errorb: std.zig.ErrorBundle.Wip = try .init(init.gpa);
                     genfile(
                         init.gpa,
                         init.io,
@@ -350,8 +347,7 @@ pub fn run(init: std.process.Init) !void {
 
     {
         var errors = false;
-        var errorb: std.zig.ErrorBundle.Wip = undefined;
-        try errorb.init(init.gpa);
+        var errorb: std.zig.ErrorBundle.Wip = try .init(init.gpa);
         var iter = state.files.iterator();
         while (iter.next()) |kv| {
             const outpath = kv.key_ptr.*;
@@ -458,8 +454,7 @@ pub fn run(init: std.process.Init) !void {
                     if (kv.value_ptr.content != .path) continue;
 
                     if (std.mem.eql(u8, kv.value_ptr.content.path, p)) {
-                        var errors: std.zig.ErrorBundle.Wip = undefined;
-                        try errors.init(init.gpa);
+                        var errors: std.zig.ErrorBundle.Wip = try .init(init.gpa);
                         genfile(
                             init.gpa,
                             init.io,

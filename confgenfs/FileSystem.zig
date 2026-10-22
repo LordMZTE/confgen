@@ -11,8 +11,8 @@ const FileSystem = @This();
 
 pub const fuse_ops = ops: {
     var ops = std.mem.zeroes(c.fuse_operations);
-    for (@typeInfo(fuse_op_impl).@"struct".decls) |decl| {
-        @field(ops, decl.name) = @field(fuse_op_impl, decl.name);
+    for (@typeInfo(fuse_op_impl).@"struct".decl_names) |decl| {
+        @field(ops, decl) = @field(fuse_op_impl, decl);
     }
     break :ops ops;
 };
@@ -298,7 +298,7 @@ const fuse_op_impl = struct {
             var iter = map.keyIterator();
             while (iter.next()) |k| {
                 var k_z_buf: [std.fs.max_path_bytes]u8 = undefined;
-                const k_z = std.fmt.bufPrintZ(&k_z_buf, "{s}", .{k.*}) catch
+                const k_z = std.mem.printSentinel(&k_z_buf, "{s}", .{k.*}, 0) catch
                     return errnoRet(.NOMEM);
 
                 if (path.len == 0) {
@@ -467,7 +467,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
     }
 
     {
-        const cgfs_p = try self.alloc.dupeZ(u8, "_cgfs");
+        const cgfs_p = try self.alloc.dupeSentinel(u8, "_cgfs", 0);
         errdefer self.alloc.free(cgfs_p);
 
         try self.directory_cache.put(self.alloc, cgfs_p, {});
@@ -494,7 +494,7 @@ fn computeDirectoryCache(self: *FileSystem) !void {
             if (!res.found_existing) {
                 // TODO remove the entry again in case this allocation fails to not leave the map in
                 // an invalid state
-                res.key_ptr.* = try self.alloc.dupeZ(u8, dirname);
+                res.key_ptr.* = try self.alloc.dupeSentinel(u8, dirname, 0);
                 res.value_ptr.* = {};
             }
         }
@@ -570,7 +570,7 @@ fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void 
     if (self.meta_cache.getPtr(name)) |m| {
         m.* = meta;
     } else {
-        const name_d = try self.alloc.dupeZ(u8, name);
+        const name_d = try self.alloc.dupeSentinel(u8, name, 0);
         errdefer self.alloc.free(name_d);
         try self.meta_cache.putNoClobber(self.alloc, name_d, meta);
     }
@@ -617,8 +617,7 @@ fn generateCGFile(
 
     std.log.info("generating {s}", .{name});
     const src_alloc = try self.alloc.dupe(u8, content);
-    var errors: std.zig.ErrorBundle.Wip = undefined;
-    try errors.init(self.alloc);
+    var errors: std.zig.ErrorBundle.Wip = try .init(self.alloc);
     const tmpl = libcg.luagen.generateLua(
         self.alloc,
         &errors,

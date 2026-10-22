@@ -440,8 +440,7 @@ fn lDoTemplate(l: *c.lua_State) !c_int {
 
     {
         const src_alloc = try state.alloc.dupe(u8, source);
-        var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(state.alloc);
+        var errors: std.zig.ErrorBundle.Wip = try .init(state.alloc);
         const tmpl_code = luagen.generateLua(
             state.alloc,
             &errors,
@@ -529,8 +528,7 @@ fn lDoTemplateFile(l: *c.lua_State) !c_int {
             state.alloc,
             .unlimited,
         );
-        var errors: std.zig.ErrorBundle.Wip = undefined;
-        try errors.init(state.alloc);
+        var errors: std.zig.ErrorBundle.Wip = try .init(state.alloc);
         const tmpl_code = luagen.generateLua(
             state.alloc,
             &errors,

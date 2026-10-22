@@ -61,9 +61,7 @@ pub fn build(b: *std.Build) void {
 
     const run_confgen_cmd = b.addRunArtifact(confgen_exe);
     run_confgen_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_confgen_cmd.addArgs(args);
-    }
+    run_confgen_cmd.addPassthruArgs();
 
     const run_confgen_step = b.step("run-confgen", "Run the confgen binary");
     run_confgen_step.dependOn(&run_confgen_cmd.step);
@@ -109,9 +107,7 @@ pub fn build(b: *std.Build) void {
 
         const run_confgenfs_cmd = b.addRunArtifact(confgenfs_exe);
         run_confgenfs_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_confgenfs_cmd.addArgs(args);
-        }
+        run_confgenfs_cmd.addPassthruArgs();
 
         const run_confgenfs_step = b.step("run-confgenfs", "Run the confgenfs binary");
         run_confgenfs_step.dependOn(&run_confgenfs_cmd.step);

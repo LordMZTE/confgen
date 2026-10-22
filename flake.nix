@@ -18,7 +18,7 @@
       packages.default = pkgs.callPackage ./package.nix { };
 
       devShells.default = pkgs.mkShell {
-        buildInputs = packages.default.buildInputs ++ (with pkgs; [ zig_0_16 pkg-config ]);
+        buildInputs = packages.default.buildInputs ++ (with pkgs; [ zig_0_17 pkg-config ]);
       };
     });
 }

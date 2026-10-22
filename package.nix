@@ -1,5 +1,5 @@
 { stdenv
-, zig_0_16
+, zig_0_17
 , pkg-config
 , fuse3
 , luajit
@@ -9,16 +9,16 @@ let
   pname = "confgen";
   version = "0.8.3";
   src = ./.;
-  deps = zig_0_16.fetchDeps {
+  deps = zig_0_17.fetchDeps {
     inherit pname version src;
-    hash = "sha256-L4ig0A4ZARq1yKNTfVKQgIEoQkJt5bJFiS4jDjlFxXI=";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
 in
 stdenv.mkDerivation {
   inherit pname version src;
 
   nativeBuildInputs = [
-    zig_0_16
+    zig_0_17
     pkg-config
   ];
 
