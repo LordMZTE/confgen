@@ -11,7 +11,7 @@ let
   src = ./.;
   deps = zig_0_17.fetchDeps {
     inherit pname version src;
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    hash = "sha256-4VFMM6Pqxy0dnDDDMxDi1DZyqjUMrnZ+4ooX0iG5Rp4=";
   };
 in
 stdenv.mkDerivation {
