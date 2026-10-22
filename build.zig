@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -15,13 +16,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }).module("args");
 
-    const libcg_cimport = b.addTranslateC(.{
-        .root_source_file = b.path("libcg/c.h"),
+    const translate_c = b.dependency("translate_c", .{});
+
+    const libcg_translator: Translator = .init(translate_c, .{
+        .c_source_file = b.path("libcg/c.h"),
         .target = target,
         .optimize = optimize,
+        .link_system_libs = &.{
+            .{ .name = "luajit" },
+        },
     });
-
-    libcg_cimport.linkSystemLibrary("luajit", .{});
 
     const libcg = b.createModule(.{
         .root_source_file = b.path("libcg/main.zig"),
@@ -30,7 +34,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "c", .module = libcg_cimport.createModule() },
+            .{ .name = "c", .module = libcg_translator.mod },
         },
     });
 
@@ -73,12 +77,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(confgen_test).step);
 
     if (enable_confgenfs) {
-        const cgfs_cimport = b.addTranslateC(.{
-            .root_source_file = b.path("confgenfs/c.h"),
+        const cgfs_translator: Translator = .init(translate_c, .{
+            .c_source_file = b.path("confgenfs/c.h"),
             .target = target,
             .optimize = optimize,
+            .link_system_libs = &.{
+                .{ .name = "fuse3" },
+            },
         });
-        cgfs_cimport.linkSystemLibrary("fuse3", .{});
 
         const confgenfs = b.addModule("confgenfs", .{
             .root_source_file = b.path("confgenfs/main.zig"),
@@ -88,7 +94,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "args", .module = zig_args },
                 .{ .name = "libcg", .module = libcg },
-                .{ .name = "c", .module = cgfs_cimport.createModule() },
+                .{ .name = "c", .module = cgfs_translator.mod },
             },
         });
 

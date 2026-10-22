@@ -132,9 +132,16 @@ pub fn run(init: std.process.Init) !void {
         const datacache_tfd: libcg.posix.TimerFd = try .init(.MONOTONIC, 0);
         defer datacache_tfd.deinit();
 
-        var fuse_buf = c.fuse_buf{};
+        var fuse_buf = c.fuse_buf{
+            .size = 0,
+            .flags = 0,
+            .mem = null,
+            .fd = -1,
+            .pos = 0,
+            .mem_size = 0,
+        };
         // There is a fuse_buf_free function, but that's internal for some reason.
-        defer std.c.free(fuse_buf.mem);
+        defer if (fuse_buf.mem) |mem| std.c.free(mem);
 
         const session = c.fuse_get_session(fuse);
 

@@ -4,6 +4,10 @@
     .fingerprint = 0x19c75b62d733d547,
 
     .dependencies = .{
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x#cfac21f3199b2b02ce3fd7db652aa456421fe4ab",
+            .hash = "translate_c-2.0.2-Q_BUWvBNBwDnyehSiuAJmdFcMYHYGA-Jc3KiYdrV2Dqx",
+        },
         .zig_args = .{
             .url = "git+https://git.mzte.de/mirrors/zig-args.git?ref=master#ad3c89ecdb2979b8b5d52b43b78e79bf51293235",
             .hash = "args-0.0.0-CiLiqmHiAABlN6icC9sZHdp8HVplOXDxuUNz2VUY_K2X",
