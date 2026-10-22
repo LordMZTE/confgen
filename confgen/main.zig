@@ -226,6 +226,7 @@ pub fn run(init: std.process.Init) !void {
         };
 
         var errors: std.zig.ErrorBundle.Wip = try .init(init.gpa);
+        var got_err = false;
         genfile(
             init.gpa,
             init.io,
@@ -242,6 +243,7 @@ pub fn run(init: std.process.Init) !void {
 
                 std.log.err("reported errors:", .{});
                 try bundle.renderToStderr(init.io, .{}, .auto);
+                got_err = true;
             },
             else => {
                 errors.deinit();
@@ -250,7 +252,7 @@ pub fn run(init: std.process.Init) !void {
         };
         errors.deinit();
 
-        libcg.luaapi.callOnDoneCallbacks(l, false);
+        libcg.luaapi.callOnDoneCallbacks(l, got_err);
         if (arg.options.watch) {
             var notif: Notifier = undefined;
             try Notifier.init(&notif, init.gpa);
@@ -288,6 +290,9 @@ pub fn run(init: std.process.Init) !void {
             };
         }
 
+        // we will have printed the error from the error bundle
+        // above
+        if (got_err) return error.Explained;
         return;
     }
 
@@ -345,8 +350,8 @@ pub fn run(init: std.process.Init) !void {
     var content_buf: std.Io.Writer.Allocating = .init(init.gpa);
     defer content_buf.deinit();
 
+    var got_errors = false;
     {
-        var errors = false;
         var errorb: std.zig.ErrorBundle.Wip = try .init(init.gpa);
         var iter = state.files.iterator();
         while (iter.next()) |kv| {
@@ -363,7 +368,7 @@ pub fn run(init: std.process.Init) !void {
                 output_abs,
                 outpath,
             ) catch |e| {
-                errors = true;
+                got_errors = true;
                 std.log.err("generating {s}: {}", .{ outpath, e });
             };
         }
@@ -376,7 +381,7 @@ pub fn run(init: std.process.Init) !void {
             try errorbo.renderToStderr(init.io, .{}, .auto);
         }
 
-        libcg.luaapi.callOnDoneCallbacks(l, errors);
+        libcg.luaapi.callOnDoneCallbacks(l, got_errors);
     }
 
     if (arg.options.watch) {
@@ -480,6 +485,7 @@ pub fn run(init: std.process.Init) !void {
             },
         };
     }
+    if (got_errors) return error.Explained;
 }
 
 fn genfile(
