@@ -62,9 +62,9 @@ pub fn main(init: std.process.Init) u8 {
                 // Once Zig is smart enough to remove LuaError from the error set here, we'll
                 // replace this branch with this compile-time check:
                 //comptime {
-                //    const ret_errors = @typeInfo(@typeInfo(@typeInfo(@TypeOf(run)).Fn.return_type.?).ErrorUnion.error_set).ErrorSet.?;
+                //    const ret_errors = @typeInfo(@typeInfo(@typeInfo(@TypeOf(run)).@"fn".return_type.?).error_union.error_set).error_set.error_names.?;
                 //    for (ret_errors) |err| {
-                //        if (std.mem.eql(u8, err.name, "LuaError"))
+                //        if (std.mem.eql(u8, err, "LuaError"))
                 //            @compileError("Run function must never return a LuaError!");
                 //    }
                 //}
