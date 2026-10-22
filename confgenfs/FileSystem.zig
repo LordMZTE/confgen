@@ -323,7 +323,7 @@ fn trimPath(p: [*:0]const u8) [:0]const u8 {
 }
 
 inline fn errnoRet(e: std.posix.E) c_int {
-    return -@as(c_int, @intCast(@intFromEnum(e)));
+    return -@as(c_int, @intCast(@backingInt(e)));
 }
 
 const CacheContext = struct {

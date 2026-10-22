@@ -177,7 +177,7 @@ pub fn run(init: std.process.Init) !void {
             if (pollfds[0].revents != 0) {
                 const ret = c.fuse_session_receive_buf(session, &fuse_buf);
                 if (ret < 0) {
-                    const err: std.posix.E = @enumFromInt(-ret);
+                    const err: std.posix.E = @fromBackingInt(@intCast(-ret));
                     std.log.err("reading FUSE events: {s}", .{@tagName(err)});
                     return error.Explained;
                 } else if (ret == 0) {
