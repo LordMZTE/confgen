@@ -27,8 +27,11 @@ pub fn luaToJSON(l: *c.lua_State, stream: *std.json.Stringify) !void {
 
         c.LUA_TNUMBER => {
             const n = c.lua_tonumber(l, -1);
-            if (@floor(n) == n) {
-                try stream.write(@as(c_int, @intFromFloat(n)));
+            const max: f64 = @floatFromInt(std.math.maxInt(i128));
+            const min: f64 = @floatFromInt(std.math.minInt(i128));
+            if (@floor(n) == n and n <= max and n >= min) {
+                // we use i128 here as a reasonably sized int that still fits most practical floats.
+                try stream.write(@as(i128, @trunc(n)));
             } else {
                 try stream.write(n);
             }

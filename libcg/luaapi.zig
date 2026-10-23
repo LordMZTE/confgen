@@ -837,8 +837,8 @@ pub const LTemplate = struct {
                 break :mode std.fmt.parseInt(u24, s, 8) catch null;
             } else if (c.lua_isnumber(l, 2) != 0) {
                 const n = c.lua_tonumber(l, 2);
-                if (@floor(n) == n) {
-                    break :mode @as(u24, @intFromFloat(n));
+                if (@floor(n) == n and n <= std.math.maxInt(u24)) {
+                    break :mode @as(u24, @trunc(n));
                 }
             }
             break :mode null;
