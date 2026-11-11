@@ -269,6 +269,28 @@ const fuse_op_impl = struct {
         return 0;
     }
 
+    pub fn access(path_p: ?[*:0]const u8, mask_c: c_int) callconv(.c) c_int {
+        const mask = std.math.cast(u3, mask_c) orelse return errnoRet(.INVAL);
+
+        var stat: c.struct_stat = undefined;
+        const err = getattr(path_p, &stat, null);
+        if (err < 0) return err;
+        if (mask == std.os.linux.F_OK) return 0;
+
+        const ctx = c.fuse_get_context().*;
+
+        const perm_shift: u3 = if (ctx.uid == std.os.linux.getuid())
+            6
+        else if (ctx.gid == std.os.linux.getgid())
+            3
+        else
+            0;
+
+        const perms = (stat.st_mode >> perm_shift) & 0o7;
+        if (perms & mask == mask) return 0;
+        return errnoRet(.ACCES);
+    }
+
     pub fn readdir(
         path_p: ?[*:0]const u8,
         buf: ?*anyopaque,
