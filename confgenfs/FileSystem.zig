@@ -79,15 +79,7 @@ const fuse_op_impl = struct {
         const fs: *FileSystem = @ptrCast(@alignCast(fuse_ctx.private_data));
         const path = trimPath(path_p.?);
 
-        const handle_idx = for (fs.handles, 0..) |h, i| {
-            if (h == null) {
-                break i;
-            }
-        } else {
-            return errnoRet(.NFILE);
-        };
-
-        fs.handles[handle_idx] = if (std.mem.eql(u8, path, "_cgfs/eval")) blk: {
+        const handle: FileHandle = if (std.mem.eql(u8, path, "_cgfs/eval")) blk: {
             if (fi.flags.ACCMODE != .WRONLY) return errnoRet(.ACCES);
             break :blk .{ .special_eval = .empty };
         } else if (std.mem.eql(u8, path, "_cgfs/opts.json")) blk: {
@@ -105,19 +97,26 @@ const fuse_op_impl = struct {
         } else blk: {
             if (fi.flags.ACCMODE != .RDONLY) return errnoRet(.ACCES);
 
-            const cgfile = fs.cg_state.files.get(path) orelse return errnoRet(.NOENT);
+            const cgfile = getf: {
+                fs.fs_rwl.lockSharedUncancelable(fs.io);
+                defer fs.fs_rwl.unlockShared(fs.io);
 
-            if (fs.data_cache.inner.get(path)) |cached| {
-                std.log.info("cached {s}", .{path});
-                const content_d = fs.alloc.dupe(u8, cached.data) catch
-                    return errnoRet(.NOMEM);
-                break :blk .{ .cgfile = .{
-                    .content = content_d,
-                    .mode = cached.mode,
-                    .assume_deterministic = false,
-                    .cachetime = 0,
-                } };
-            }
+                const cgf = fs.cg_state.files.get(path) orelse return errnoRet(.NOENT);
+
+                if (fs.data_cache.inner.get(path)) |cached| {
+                    std.log.info("cached {s}", .{path});
+                    const content_d = fs.alloc.dupe(u8, cached.data) catch
+                        return errnoRet(.NOMEM);
+                    break :blk .{ .cgfile = .{
+                        .content = content_d,
+                        .mode = cached.mode,
+                        .assume_deterministic = false,
+                        .cachetime = 0,
+                    } };
+                }
+
+                break :getf cgf;
+            };
 
             const content = fs.generateCGFile(cgfile, path, fuse_ctx) catch |e| {
                 std.log.err("generating '{s}': {}", .{ path, e });
@@ -127,9 +126,24 @@ const fuse_op_impl = struct {
             break :blk .{ .cgfile = content };
         };
 
-        std.log.debug("new handle idx: {}", .{handle_idx});
+        {
+            fs.fs_rwl.lockUncancelable(fs.io);
+            defer fs.fs_rwl.unlock(fs.io);
 
-        fi.fh = handle_idx;
+            const handle_idx = for (fs.handles, 0..) |h, i| {
+                if (h == null) {
+                    break i;
+                }
+            } else {
+                handle.deinit(fs.alloc);
+                return errnoRet(.NFILE);
+            };
+
+            std.log.debug("new handle idx: {}", .{handle_idx});
+            fs.handles[handle_idx] = handle;
+
+            fi.fh = handle_idx;
+        }
 
         return 0;
     }
@@ -146,6 +160,9 @@ const fuse_op_impl = struct {
         const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const buf = buf_r.?[0..bufsiz];
+
+        fs.fs_rwl.lockSharedUncancelable(fs.io);
+        defer fs.fs_rwl.unlockShared(fs.io);
 
         const handle = fs.handles[fi.fh] orelse return errnoRet(.BADF);
 
@@ -172,11 +189,13 @@ const fuse_op_impl = struct {
     ) callconv(.c) c_int {
         _ = path_p;
         _ = offset;
-
         const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r));
         const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
         const buf = buf_p.?[0..bufsiz];
+
+        fs.fs_rwl.lockUncancelable(fs.io);
+        defer fs.fs_rwl.unlock(fs.io);
 
         switch (fs.handles[fi.fh] orelse return errnoRet(.BADF)) {
             .cgfile => return errnoRet(.BADF),
@@ -197,11 +216,24 @@ const fuse_op_impl = struct {
         const fi: *ffi.fuse_file_info = @ptrCast(@alignCast(fi_r));
         const fs: *FileSystem = @ptrCast(@alignCast(c.fuse_get_context().*.private_data));
 
-        if (fs.handles[fi.fh]) |h| {
+        const maybe_h = get_h: {
+            fs.fs_rwl.lockSharedUncancelable(fs.io);
+            defer fs.fs_rwl.unlockShared(fs.io);
+
+            break :get_h fs.handles[fi.fh];
+        };
+
+        if (maybe_h) |h| {
             defer {
-                std.log.debug("freed handle idx {}", .{fi.fh});
-                h.deinit(fs.alloc);
+                fs.fs_rwl.lockUncancelable(fs.io);
+                defer fs.fs_rwl.unlock(fs.io);
+
                 fs.handles[fi.fh] = null;
+            }
+
+            defer {
+                h.deinit(fs.alloc);
+                std.log.debug("freed handle idx {}", .{fi.fh});
             }
 
             switch (h) {
@@ -251,7 +283,14 @@ const fuse_op_impl = struct {
             return 0;
         }
 
-        if (fs.cg_state.files.get(path)) |cgf| {
+        const maybe_cgf = getf: {
+            fs.fs_rwl.lockSharedUncancelable(fs.io);
+            defer fs.fs_rwl.unlockShared(fs.io);
+
+            break :getf fs.cg_state.files.get(path);
+        };
+
+        if (maybe_cgf) |cgf| {
             const meta = fs.getFileMeta(cgf, path) catch |e| {
                 std.log.err("getting file meta: {}", .{e});
                 return errnoRet(.IO);
@@ -259,11 +298,16 @@ const fuse_op_impl = struct {
             stat.st_mode = std.posix.S.IFREG | meta.mode;
             stat.st_size = @intCast(meta.size);
             stat.st_nlink = 1;
-        } else if (fs.directory_cache.contains(path)) {
-            stat.st_mode = dir_mode;
-            stat.st_nlink = 2;
         } else {
-            return errnoRet(.NOENT);
+            fs.fs_rwl.lockSharedUncancelable(fs.io);
+            defer fs.fs_rwl.unlockShared(fs.io);
+
+            if (fs.directory_cache.contains(path)) {
+                stat.st_mode = dir_mode;
+                stat.st_nlink = 2;
+            } else {
+                return errnoRet(.NOENT);
+            }
         }
 
         return 0;
@@ -315,6 +359,9 @@ const fuse_op_impl = struct {
             _ = filler.?(buf, "opts.json", null, 0, 0);
             return 0;
         }
+
+        fs.fs_rwl.lockSharedUncancelable(fs.io);
+        defer fs.fs_rwl.unlockShared(fs.io);
 
         inline for (.{ fs.directory_cache, fs.cg_state.files }) |map| {
             var iter = map.keyIterator();
@@ -384,8 +431,13 @@ io: std.Io,
 cg_state: *libcg.luaapi.CgState,
 l: *libcg.c.lua_State,
 
-/// A buffer used for temporary storage during file generation. It is re-used.
-genbuf: std.Io.Writer.Allocating,
+/// A mutex that is used when the Lua state is in use.  This may be unlocked whenever `l` is not
+/// actively being used AND the stack does not hold any local values.
+/// This is needed so we can support multithreading.
+l_mtx: std.Io.Mutex,
+
+/// A mutex for the state of the filesystem except Lua.
+fs_rwl: std.Io.RwLock,
 
 /// A set containing all directories.
 directory_cache: Cache(void),
@@ -466,7 +518,8 @@ fn init(init_data: InitData) !FileSystem {
         .io = init_data.io,
         .cg_state = cg_state,
         .l = l,
-        .genbuf = .init(init_data.alloc),
+        .l_mtx = .init,
+        .fs_rwl = .init,
         .directory_cache = .empty,
         .meta_cache = .empty,
         .data_cache = init_data.data_cache,
@@ -523,10 +576,11 @@ fn computeDirectoryCache(self: *FileSystem) !void {
     }
 }
 
+// FIXME: this is gonna cause us trouble when called while other requests are being handled
+// concurrently.
 fn deinit(self: *FileSystem) void {
     self.cg_state.deinit();
     self.alloc.destroy(self.cg_state);
-    self.genbuf.deinit();
 
     var dircache_iter = self.directory_cache.keyIterator();
     while (dircache_iter.next()) |key| {
@@ -549,45 +603,56 @@ fn deinit(self: *FileSystem) void {
     self.alloc.destroy(self);
 }
 
+/// No locks must be held when calling this.
 fn getFileMeta(self: *FileSystem, cgf: libcg.luaapi.CgFile, path: [:0]const u8) !FileMeta {
-    if (self.meta_cache.get(path)) |meta| {
+    {
+        self.fs_rwl.lockSharedUncancelable(self.io);
+        defer self.fs_rwl.unlockShared(self.io);
+
+        const cached = self.meta_cache.get(path);
+        if (cached) |meta| return meta;
+    }
+
+    std.log.debug("new in meta cache: {s}", .{path});
+
+    if (cgf.copy) {
+        var meta = FileMeta{
+            .mode = 0o444,
+            .size = 0,
+        };
+        switch (cgf.content) {
+            .string => |s| meta.size = s.len,
+            .path => |content_path| {
+                const stat = try std.Io.Dir.cwd().statFile(self.io, content_path, .{});
+                meta.mode = @truncate(stat.permissions.toMode());
+                meta.mode &= 0o555; // read-only
+                meta.size = stat.size;
+            },
+        }
+
+        self.fs_rwl.lockUncancelable(self.io);
+        defer self.fs_rwl.unlock(self.io);
+
+        try self.updateMetaCache(path, meta);
         return meta;
     } else {
-        std.log.debug("new in meta cache: {s}", .{path});
+        // generateCGFile populates the meta cache for generated files
+        const gen = try self.generateCGFile(cgf, path, null);
+        defer self.alloc.free(gen.content);
 
-        if (cgf.copy) {
-            var meta = FileMeta{
-                .mode = 0o444,
-                .size = 0,
-            };
-            switch (cgf.content) {
-                .string => |s| meta.size = s.len,
-                .path => |content_path| {
-                    const stat = try std.Io.Dir.cwd().statFile(self.io, content_path, .{});
-                    meta.mode = @truncate(stat.permissions.toMode());
-                    meta.mode &= 0o555; // read-only
-                    meta.size = stat.size;
-                },
-            }
-
-            try self.updateMetaCache(path, meta);
-            return meta;
-        } else {
-            // generateCGFile populates the meta cache for generated files
-            const gen = try self.generateCGFile(cgf, path, null);
-            defer self.alloc.free(gen.content);
-
-            return self.meta_cache.get(path) orelse blk: {
-                std.log.err(
-                    "Meta cache not populated for generated file '{s}'! This is a bug!",
-                    .{path},
-                );
-                break :blk .{ .mode = 0o444, .size = 0 };
-            };
-        }
+        self.fs_rwl.lockSharedUncancelable(self.io);
+        defer self.fs_rwl.unlockShared(self.io);
+        return self.meta_cache.get(path) orelse blk: {
+            std.log.err(
+                "Meta cache not populated for generated file '{s}'! This is a bug!",
+                .{path},
+            );
+            break :blk .{ .mode = 0o444, .size = 0 };
+        };
     }
 }
 
+/// Caller must hold exclusive lock on fs state while calling this!
 fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void {
     if (self.meta_cache.getPtr(name)) |m| {
         m.* = meta;
@@ -598,21 +663,25 @@ fn updateMetaCache(self: *FileSystem, name: [:0]const u8, meta: FileMeta) !void 
     }
 }
 
+/// No locks must be held when calling this.
 fn generateCGFile(
     self: *FileSystem,
     cgf: libcg.luaapi.CgFile,
     name: [:0]const u8,
     maybe_fsctx: ?c.fuse_context,
 ) !libcg.luaapi.GeneratedFile {
-    var content: []const u8 = undefined;
+    std.debug.assert(self.l_mtx.state.load(.acquire) == .unlocked);
+    std.debug.assert(@atomicLoad(usize, &self.fs_rwl.state, .acquire) == 0);
+
     var copy_mode: u24 = 0o644;
+    var content: []const u8 = undefined;
     switch (cgf.content) {
         // CGFile contains content, no work needed.
-        .string => |con| content = con,
+        .string => |con| content = try self.alloc.dupe(u8, con),
 
         // CgFile points to a file on disk, read it.
         .path => |rel_path| {
-            self.genbuf.clearRetainingCapacity();
+            // TODO: use buffer pool
             var file = try std.Io.Dir.cwd().openFile(self.io, rel_path, .{});
             defer file.close(self.io);
 
@@ -620,17 +689,17 @@ fn generateCGFile(
 
             var read_buf: [1024]u8 = undefined;
             var reader = file.reader(self.io, &read_buf);
-
-            try self.genbuf.ensureTotalCapacity(64); // Without this, sendFileAll trips an assertion.
-            _ = try self.genbuf.writer.sendFileAll(&reader, .unlimited);
-            content = self.genbuf.writer.buffered();
+            content = try reader.interface.allocRemaining(
+                self.alloc,
+                .unlimited,
+            );
         },
     }
 
     if (cgf.copy) {
         std.log.info("copying {s}", .{name});
         return .{
-            .content = try self.alloc.dupe(u8, content),
+            .content = content,
             .mode = copy_mode & 0o555, // read-only
             .assume_deterministic = true,
             .cachetime = 0,
@@ -638,12 +707,14 @@ fn generateCGFile(
     }
 
     std.log.info("generating {s}", .{name});
-    const src_alloc = try self.alloc.dupe(u8, content);
-    var errors: std.zig.ErrorBundle.Wip = try .init(self.alloc);
+    var errors = errs: {
+        errdefer self.alloc.free(content);
+        break :errs try std.zig.ErrorBundle.Wip.init(self.alloc);
+    };
     const tmpl = libcg.luagen.generateLua(
         self.alloc,
         &errors,
-        src_alloc,
+        content,
         name,
     ) catch |e| switch (e) {
         error.Reported => {
@@ -658,24 +729,35 @@ fn generateCGFile(
     };
     errors.deinit();
 
-    libcg.c.lua_newtable(self.l);
-    libcg.luaapi.LTemplate.createTmplEnv(self.l);
-    if (maybe_fsctx) |fsctx| {
-        const lfsctx = LFsCtx{ .ctx = fsctx };
+    var cachetime: i64 = 0;
+    const genfile = runlua: {
+        self.l_mtx.lockUncancelable(self.io);
+        defer self.l_mtx.unlock(self.io);
 
-        lfsctx.push(self.l);
-        libcg.c.lua_setfield(self.l, -2, "fsctx");
-    }
-    const genfile = try libcg.luaapi.generateWithEnv(self.l, tmpl);
+        libcg.c.lua_newtable(self.l);
+        libcg.luaapi.LTemplate.createTmplEnv(self.l);
+        if (maybe_fsctx) |fsctx| {
+            const lfsctx = LFsCtx{ .ctx = fsctx };
 
-    const cachetime = genfile.cachetime orelse global: {
-        libcg.c.lua_getglobal(self.l, "cg");
-        libcg.c.lua_getfield(self.l, -1, "fs");
-        libcg.c.lua_getfield(self.l, -1, "cachetime");
-        defer libcg.c.lua_pop(self.l, 3);
+            lfsctx.push(self.l);
+            libcg.c.lua_setfield(self.l, -2, "fsctx");
+        }
+        const gen = try libcg.luaapi.generateWithEnv(self.l, tmpl);
 
-        break :global libcg.c.lua_tointeger(self.l, -1);
+        cachetime = gen.cachetime orelse global: {
+            libcg.c.lua_getglobal(self.l, "cg");
+            libcg.c.lua_getfield(self.l, -1, "fs");
+            libcg.c.lua_getfield(self.l, -1, "cachetime");
+            defer libcg.c.lua_pop(self.l, 3);
+
+            break :global libcg.c.lua_tointeger(self.l, -1);
+        };
+
+        break :runlua gen;
     };
+
+    self.fs_rwl.lockUncancelable(self.io);
+    defer self.fs_rwl.unlock(self.io);
 
     if (cachetime > 0) {
         std.log.debug("new in data cache: {s}", .{name});
@@ -714,18 +796,26 @@ fn generateOptsJSON(self: *FileSystem) ![]const u8 {
         .options = .{ .whitespace = .indent_2 },
     };
 
-    const lua_top = libcg.c.lua_gettop(self.l);
-    defer libcg.c.lua_settop(self.l, lua_top);
+    {
+        self.l_mtx.lockUncancelable(self.io);
+        defer self.l_mtx.unlock(self.io);
 
-    libcg.c.lua_getglobal(self.l, "cg");
-    libcg.c.lua_getfield(self.l, -1, "opt");
+        const lua_top = libcg.c.lua_gettop(self.l);
+        defer libcg.c.lua_settop(self.l, lua_top);
 
-    try libcg.format.formats.json.luaToJSON(self.l, &wstream);
+        libcg.c.lua_getglobal(self.l, "cg");
+        libcg.c.lua_getfield(self.l, -1, "opt");
+
+        try libcg.format.formats.json.luaToJSON(self.l, &wstream);
+    }
 
     return try buf.toOwnedSlice();
 }
 
 fn eval(self: *FileSystem, code: []const u8) !void {
+    self.l_mtx.lockUncancelable(self.io);
+    defer self.l_mtx.unlock(self.io);
+
     if (libcg.c.luaL_loadbuffer(self.l, code.ptr, code.len, "<cgfs-eval>") != 0) {
         std.log.err("unable to load eval code: {?s}", .{libcg.ffi.luaToString(self.l, -1)});
         libcg.c.lua_pop(self.l, 1);

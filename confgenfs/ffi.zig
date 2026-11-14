@@ -39,7 +39,9 @@ pub fn fuseLogFn(
         return;
     }
 
-    const msg = buf[0..@intCast(ret)];
+    const msg_raw = buf[0..@intCast(ret)];
+    // log messages usually end with newlines, but we already add those.
+    const msg = std.mem.trimEnd(u8, msg_raw, &std.ascii.whitespace);
 
     const log = std.log.scoped(.FUSE);
     switch (lvl) {

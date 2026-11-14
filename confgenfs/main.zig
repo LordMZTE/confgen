@@ -5,8 +5,9 @@ const c = @import("c");
 
 const ffi = @import("ffi.zig");
 
-const FileSystem = @import("FileSystem.zig");
 const DataCache = @import("DataCache.zig");
+const FileSystem = @import("FileSystem.zig");
+const FuseBufpool = @import("FuseBufpool.zig");
 
 const Args = struct {
     help: bool = false,
@@ -132,22 +133,13 @@ pub fn run(init: std.process.Init) !void {
         const datacache_tfd: libcg.posix.TimerFd = try .init(.MONOTONIC, 0);
         defer datacache_tfd.deinit();
 
-        var fuse_buf = c.fuse_buf{
-            .size = 0,
-            .flags = 0,
-            .mem = null,
-            .fd = -1,
-            .pos = 0,
-            .mem_size = 0,
-        };
-        // There is a fuse_buf_free function, but that's internal for some reason.
-        defer if (fuse_buf.mem) |mem| std.c.free(mem);
+        var bufs: FuseBufpool = .init;
+        defer bufs.deinit(init.gpa);
 
-        const session = c.fuse_get_session(fuse);
+        var tasks: std.Io.Group = .init;
+        defer tasks.cancel(init.io);
 
-        // This is set to true once we've done some FUSE work in order to then pass a timeout to
-        // poll to invoke the lua GC when we've no work.
-        var did_work_since_last_gc = false;
+        const session = c.fuse_get_session(fuse).?;
 
         var cache_timer_next: ?i64 = null;
 
@@ -166,25 +158,19 @@ pub fn run(init: std.process.Init) !void {
         } };
 
         while (c.fuse_session_exited(session) == 0) {
-            const nret = try std.posix.poll(
+            _ = try std.posix.poll(
                 &pollfds,
-                if (did_work_since_last_gc) 2 * std.time.ms_per_s else -1,
+                -1,
             );
-
-            // Hit timeout, we want to do a GC pass.
-            if (nret == 0) {
-                std.log.debug("running GC pass on idle", .{});
-                // return value isn't documented for LUA_GCCOLLECT, probably means nothing.
-                _ = libcg.c.lua_gc(l, libcg.c.LUA_GCCOLLECT, 0);
-                did_work_since_last_gc = false;
-                continue;
-            }
 
             // event on FUSE socket
             if (pollfds[0].revents != 0) {
+                var fuse_buf = try bufs.acquire(init.io);
+
                 const ret = c.fuse_session_receive_buf(session, &fuse_buf);
                 if (ret < 0) {
                     const err: std.posix.E = @fromBackingInt(@intCast(-ret));
+                    try bufs.release(init.io, init.gpa, fuse_buf);
                     std.log.err("reading FUSE events: {s}", .{@tagName(err)});
                     return error.Explained;
                 } else if (ret == 0) {
@@ -192,8 +178,11 @@ pub fn run(init: std.process.Init) !void {
                     break;
                 }
 
-                c.fuse_session_process_buf(session, &fuse_buf);
-                did_work_since_last_gc = true;
+                try tasks.concurrent(
+                    init.io,
+                    processFuseEvents,
+                    .{ init.io, init.gpa, &bufs, session, fuse_buf },
+                );
             }
 
             // got signal
@@ -225,4 +214,17 @@ pub fn run(init: std.process.Init) !void {
     if (init_data.err) |e| {
         return e;
     }
+}
+
+fn processFuseEvents(
+    io: std.Io,
+    alloc: std.mem.Allocator,
+    bufs: *FuseBufpool,
+    session: *c.fuse_session,
+    buf: c.fuse_buf,
+) void {
+    c.fuse_session_process_buf(session, &buf);
+    bufs.release(io, alloc, buf) catch {
+        if (buf.mem) |mem| std.c.free(mem);
+    };
 }
