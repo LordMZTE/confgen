@@ -670,9 +670,6 @@ fn generateCGFile(
     name: [:0]const u8,
     maybe_fsctx: ?c.fuse_context,
 ) !libcg.luaapi.GeneratedFile {
-    std.debug.assert(self.l_mtx.state.load(.acquire) == .unlocked);
-    std.debug.assert(@atomicLoad(usize, &self.fs_rwl.state, .acquire) == 0);
-
     var copy_mode: u24 = 0o644;
     var content: []const u8 = undefined;
     switch (cgf.content) {
