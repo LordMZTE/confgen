@@ -41,6 +41,9 @@ const fuse_op_impl = struct {
             .{ proto_major, proto_minor },
         );
 
+        // required to avoid deadlocks with directory reads that depend on eachother.
+        _ = c.fuse_set_feature_flag(ci, c.FUSE_CAP_PARALLEL_DIROPS);
+
         // New files are only added on reloads, so long cache time is fine.
         cfg.?.negative_timeout = 10;
 
