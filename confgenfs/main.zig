@@ -66,8 +66,16 @@ pub fn run(init: std.process.Init) !void {
 
     c.fuse_set_log_func(ffi.fuseLogFn);
 
+    var l_mtx: std.Io.Mutex = .init;
     const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
-    defer libcg.c.lua_close(l);
+    defer {
+        l_mtx.lockUncancelable(init.io);
+        defer l_mtx.unlock(init.io);
+        libcg.c.lua_close(l);
+    }
+
+    libcg.c.luaL_openlibs(l);
+    libcg.lsyncstd.register(l, init.io, init.gpa, init.environ_map, &l_mtx);
 
     var data_cache: DataCache = .empty;
     defer data_cache.deinit(init.gpa);
@@ -81,6 +89,7 @@ pub fn run(init: std.process.Init) !void {
         .mountpoint = arg.positionals[1],
         .fuse = undefined,
         .data_cache = &data_cache,
+        .l_mtx = &l_mtx,
         .l = l,
         .err = null,
     };

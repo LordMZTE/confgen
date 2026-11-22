@@ -67,10 +67,8 @@ pub const GeneratedFile = struct {
 };
 
 pub fn initLuaState(cgstate: *CgState, l: *c.lua_State) !void {
-    // open all lua libs
-    c.luaL_openlibs(l);
-
     c.lua_getglobal(l, "_G");
+    defer c.lua_pop(l, 1);
 
     // Override `print`
     c.lua_pushcfunction(l, ffi.luaFunc(lPrint));

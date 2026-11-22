@@ -27,6 +27,7 @@ pub const InitData = struct {
     mountpoint: [:0]const u8,
     data_cache: *DataCache,
     fuse: *c.fuse,
+    l_mtx: *std.Io.Mutex,
     l: *libcg.c.lua_State,
     err: ?anyerror,
 };
@@ -437,7 +438,7 @@ l: *libcg.c.lua_State,
 /// A mutex that is used when the Lua state is in use.  This may be unlocked whenever `l` is not
 /// actively being used AND the stack does not hold any local values.
 /// This is needed so we can support multithreading.
-l_mtx: std.Io.Mutex,
+l_mtx: *std.Io.Mutex,
 
 /// A mutex for the state of the filesystem except Lua.
 fs_rwl: std.Io.RwLock,
@@ -471,6 +472,9 @@ fn init(init_data: InitData) !FileSystem {
     errdefer cg_state.deinit();
 
     try std.process.setCurrentPath(cg_state.io, cg_state.rootpath);
+
+    try init_data.l_mtx.lock(init_data.io);
+    defer init_data.l_mtx.unlock(init_data.io);
 
     const l = init_data.l;
     try libcg.luaapi.initLuaState(cg_state, l);
@@ -521,7 +525,7 @@ fn init(init_data: InitData) !FileSystem {
         .io = init_data.io,
         .cg_state = cg_state,
         .l = l,
-        .l_mtx = .init,
+        .l_mtx = init_data.l_mtx,
         .fs_rwl = .init,
         .directory_cache = .empty,
         .meta_cache = .empty,
@@ -734,23 +738,26 @@ fn generateCGFile(
         self.l_mtx.lockUncancelable(self.io);
         defer self.l_mtx.unlock(self.io);
 
-        libcg.c.lua_newtable(self.l);
-        libcg.luaapi.LTemplate.createTmplEnv(self.l);
+        const l = libcg.lsyncstd.regThread(self.l);
+        defer libcg.lsyncstd.unregThread(l);
+
+        libcg.c.lua_newtable(l);
+        libcg.luaapi.LTemplate.createTmplEnv(l);
         if (maybe_fsctx) |fsctx| {
             const lfsctx = LFsCtx{ .ctx = fsctx };
 
-            lfsctx.push(self.l);
-            libcg.c.lua_setfield(self.l, -2, "fsctx");
+            lfsctx.push(l);
+            libcg.c.lua_setfield(l, -2, "fsctx");
         }
-        const gen = try libcg.luaapi.generateWithEnv(self.l, tmpl);
+        const gen = try libcg.luaapi.generateWithEnv(l, tmpl);
 
         cachetime = gen.cachetime orelse global: {
-            libcg.c.lua_getglobal(self.l, "cg");
-            libcg.c.lua_getfield(self.l, -1, "fs");
-            libcg.c.lua_getfield(self.l, -1, "cachetime");
-            defer libcg.c.lua_pop(self.l, 3);
+            libcg.c.lua_getglobal(l, "cg");
+            libcg.c.lua_getfield(l, -1, "fs");
+            libcg.c.lua_getfield(l, -1, "cachetime");
+            defer libcg.c.lua_pop(l, 3);
 
-            break :global libcg.c.lua_tointeger(self.l, -1);
+            break :global libcg.c.lua_tointeger(l, -1);
         };
 
         break :runlua gen;
@@ -800,13 +807,16 @@ fn generateOptsJSON(self: *FileSystem) ![]const u8 {
         self.l_mtx.lockUncancelable(self.io);
         defer self.l_mtx.unlock(self.io);
 
-        const lua_top = libcg.c.lua_gettop(self.l);
-        defer libcg.c.lua_settop(self.l, lua_top);
+        const l = libcg.lsyncstd.regThread(self.l);
+        defer libcg.lsyncstd.unregThread(l);
 
-        libcg.c.lua_getglobal(self.l, "cg");
-        libcg.c.lua_getfield(self.l, -1, "opt");
+        const lua_top = libcg.c.lua_gettop(l);
+        defer libcg.c.lua_settop(l, lua_top);
 
-        try libcg.format.formats.json.luaToJSON(self.l, &wstream);
+        libcg.c.lua_getglobal(l, "cg");
+        libcg.c.lua_getfield(l, -1, "opt");
+
+        try libcg.format.formats.json.luaToJSON(l, &wstream);
     }
 
     return try buf.toOwnedSlice();
@@ -816,15 +826,18 @@ fn eval(self: *FileSystem, code: []const u8) !void {
     self.l_mtx.lockUncancelable(self.io);
     defer self.l_mtx.unlock(self.io);
 
-    if (libcg.c.luaL_loadbuffer(self.l, code.ptr, code.len, "<cgfs-eval>") != 0) {
-        std.log.err("unable to load eval code: {?s}", .{libcg.ffi.luaToString(self.l, -1)});
-        libcg.c.lua_pop(self.l, 1);
+    const l = libcg.lsyncstd.regThread(self.l);
+    defer libcg.lsyncstd.unregThread(l);
+
+    if (libcg.c.luaL_loadbuffer(l, code.ptr, code.len, "<cgfs-eval>") != 0) {
+        std.log.err("unable to load eval code: {?s}", .{libcg.ffi.luaToString(l, -1)});
+        libcg.c.lua_pop(l, 1);
         return error.InvalidEvalCode;
     }
 
-    if (libcg.c.lua_pcall(self.l, 0, 0, 0) != 0) {
-        std.log.err("unable to run eval code: {?s}", .{libcg.ffi.luaToString(self.l, -1)});
-        libcg.c.lua_pop(self.l, 1);
+    if (libcg.c.lua_pcall(l, 0, 0, 0) != 0) {
+        std.log.err("unable to run eval code: {?s}", .{libcg.ffi.luaToString(l, -1)});
+        libcg.c.lua_pop(l, 1);
         return error.InvalidEvalCode;
     }
 }

@@ -3,6 +3,7 @@ pub const c = @import("c");
 
 pub const ffi = @import("ffi.zig");
 pub const format = @import("format.zig");
+pub const lsyncstd = @import("lsyncstd.zig");
 pub const luaapi = @import("luaapi.zig");
 pub const luagen = @import("luagen.zig");
 pub const posix = @import("posix.zig");

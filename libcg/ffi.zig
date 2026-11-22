@@ -1,7 +1,8 @@
 const std = @import("std");
 const c = @import("c");
 
-/// Generates a wrapper function with error handling for a lua CFunction
+/// Generates a wrapper function with error handling for a lua CFunction that
+/// raises a Lua error in the error case.
 pub fn luaFunc(comptime func: anytype) c.lua_CFunction {
     return &struct {
         fn f(l: ?*c.lua_State) callconv(.c) c_int {
@@ -23,14 +24,34 @@ pub fn luaFunc(comptime func: anytype) c.lua_CFunction {
     }.f;
 }
 
+/// Generates a wrapper function with error handling that returns nil and an
+/// error string in the error case.
+pub fn luaFuncErrRet(comptime func: anytype) c.lua_CFunction {
+    return &struct {
+        fn f(l: ?*c.lua_State) callconv(.c) c_int {
+            return func(l.?) catch |e| {
+                // If error.LuaError is returned, an error value must be on the stack.
+                if (e != error.LuaError) {
+                    luaPushString(l.?, @errorName(e));
+                }
+                c.lua_pushnil(l);
+                c.lua_insert(l, -2);
+                return 2;
+            };
+        }
+    }.f;
+}
+
 /// Convenience function for pushing some full userdata onto the lua stack
 pub fn luaPushUdata(l: *c.lua_State, comptime T: type) *T {
     // create and set data
     const udata: *T = @ptrCast(@alignCast(c.lua_newuserdata(l, @sizeOf(T)).?));
 
-    // set metatable
-    c.luaL_getmetatable(l, T.lua_registry_key);
-    _ = c.lua_setmetatable(l, -2);
+    if (@hasDecl(T, "lua_registry_key")) {
+        // set metatable
+        c.luaL_getmetatable(l, T.lua_registry_key);
+        _ = c.lua_setmetatable(l, -2);
+    }
 
     return udata;
 }

@@ -154,6 +154,7 @@ pub fn run(init: std.process.Init) !void {
 
         const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
         defer libcg.c.lua_close(l);
+        libcg.c.luaL_openlibs(l);
         try libcg.luaapi.initLuaState(&state, l);
 
         if (arg.options.eval) |code| {
@@ -215,6 +216,7 @@ pub fn run(init: std.process.Init) !void {
 
         const l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
         defer libcg.c.lua_close(l);
+        libcg.c.luaL_openlibs(l);
         try libcg.luaapi.initLuaState(&state, l);
 
         var content_buf: std.Io.Writer.Allocating = .init(init.gpa);
@@ -335,6 +337,7 @@ pub fn run(init: std.process.Init) !void {
 
     var l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
     defer libcg.c.lua_close(l);
+    libcg.c.luaL_openlibs(l);
     try libcg.luaapi.initLuaState(&state, l);
 
     if (arg.options.eval) |code| {
@@ -412,6 +415,7 @@ pub fn run(init: std.process.Init) !void {
                     // Destroy Lua state
                     libcg.c.lua_close(l);
                     l = libcg.c.luaL_newstate() orelse return error.OutOfMemory;
+                    libcg.c.luaL_openlibs(l);
                     try libcg.luaapi.initLuaState(&state, l);
 
                     // Reset CgState
